@@ -37,10 +37,16 @@ Without the blueprint, the same works as **New > Web Service**, environment
 "Docker" (auto-detected from `Dockerfile`).
 
 Building a different branch/fork of the frontend? The `Dockerfile`'s
-`frontend` stage takes `FRONTEND_REPO` and `FRONTEND_REF` build args
-(defaults: this account's `ispsjginjs`, branch `main`) - pass them via
-`docker build --build-arg ...` if building elsewhere, or your host's
-Docker build-args setting if it has one.
+`frontend` stage takes `FRONTEND_REPO`, `FRONTEND_REF`, and
+`FRONTEND_COMMIT_API` build args (defaults: this account's `ispsjginjs`,
+branch `main`) - pass them via `docker build --build-arg ...` if building
+elsewhere, or your host's Docker build-args setting if it has one.
+`FRONTEND_COMMIT_API` must point at the same repo/ref as the other two if
+you override them - it's a GitHub API URL the build fetches on every
+build specifically to invalidate Docker's cache for the `git clone` step
+below it when there's a new commit (a plain `git clone` has identical
+instruction text every build, so without this a stale, long-cached clone
+of the frontend could silently outlive many new pushes to it).
 
 Required environment variables:
 
