@@ -164,37 +164,31 @@ def get_info(text: str) -> int:
 
 
 def get_student_name(text: str) -> str | None:
-    """Best-effort extraction of the student's real name from mainpage HTML.
+    """Extract the student's real name from is.psjg.cz page HTML.
 
-    NOTE: unverified against a real, logged-in is.psjg.cz page - this app
-    has no way to check that from here. If it comes back None (or wrong),
-    the frontend just falls back to a generic "Student" label, so this is
-    safe to guess at; tighten it up if it doesn't find the real name.
+    Confirmed by live inspection (see docs/investigate-is-psjg.md): every
+    page's navbar server-renders it as
+    <li class="nav-item nav-username">Name</li> - not JS-injected, so a
+    plain requests.get() sees it. Falls back to the <title> tag
+    ("Name | PSJG"), also confirmed present, if the navbar element is
+    ever missing.
 
     Args:
         text (str): raw HTML from is.psjg.cz
 
     Returns:
-        str | None: the student's name, or None if nothing plausible was found
+        str | None: the student's name, or None if neither source had it
     """
     soup = BeautifulSoup(text, "html.parser")
 
-    def looks_like_name(candidate: str) -> str | None:
-        candidate = delete_spaces(candidate)
-        if candidate and " " in candidate and 3 < len(candidate) < 60:
-            return candidate
-        return None
-
-    # The portfolio link is sometimes labelled with the student's own name
-    portfolio_link = soup.find(title="Téma studentského portfolia")
-    if portfolio_link:
-        name = looks_like_name(portfolio_link.get_text())
+    nav_username = soup.find("li", class_="nav-username")
+    if nav_username:
+        name = delete_spaces(nav_username.get_text())
         if name:
             return name
 
-    # <title>Jan Novák - is.psjg.cz</title>-style pages
     if soup.title and soup.title.string:
-        name = looks_like_name(re.split(r"[-|:]", soup.title.string)[0])
+        name = delete_spaces(soup.title.string.split("|")[0])
         if name:
             return name
 

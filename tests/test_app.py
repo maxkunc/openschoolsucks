@@ -1,5 +1,5 @@
 import pytest
-from app import app, znamka_from_percentage, build_home_stats
+from app import app, znamka_from_percentage, build_home_stats, get_student_name
 
 @pytest.fixture()
 def client():
@@ -56,3 +56,30 @@ def test_best_subject_falls_back_to_grade_without_percentages():
     ]
     stats = build_home_stats(subjects_display, [])
     assert stats["best_subject"] == "Fyzika"
+
+
+def test_get_student_name_from_navbar():
+    # Real markup confirmed by live inspection - see docs/investigate-is-psjg.md
+    html = """
+    <html><head><title>Kunc Maxmilian | PSJG</title></head>
+    <body>
+      <nav id="mainNav" class="navbar navbar-expand-lg navbar-dark bg-white absolute-top">
+        <div id="navbarResponsive" class="collapse navbar-collapse">
+          <ul class="navbar-nav ml-auto">
+            <li class="nav-item nav-username">Kunc Maxmilian</li>
+          </ul>
+        </div>
+      </nav>
+    </body></html>
+    """
+    assert get_student_name(html) == "Kunc Maxmilian"
+
+
+def test_get_student_name_falls_back_to_title():
+    html = '<html><head><title>Kunc Maxmilian | PSJG</title></head><body></body></html>'
+    assert get_student_name(html) == "Kunc Maxmilian"
+
+
+def test_get_student_name_none_when_neither_present():
+    html = "<html><head></head><body><p>no name here</p></body></html>"
+    assert get_student_name(html) is None
