@@ -15,7 +15,7 @@ ARG FRONTEND_REPO_NAME=ispsjginjs
 # file) - is what invalidates this layer when it needs to.
 # Update this to ispsjginjs's new HEAD commit every time it changes:
 #   git -C ../ispsjginjs rev-parse HEAD
-ARG FRONTEND_COMMIT=4c023ca68e2561cbc9f1103281f2ac8f8ecbf368
+ARG FRONTEND_COMMIT=2bbc5c76936bfb387479443cb7fc192e213a0dd8
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
