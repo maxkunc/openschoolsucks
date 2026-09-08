@@ -18,6 +18,23 @@ which breaks login. Making it Vercel-compatible would require swapping the
 session store for an external one shared across invocations (e.g. Redis /
 Vercel KV) instead of the local filesystem - ask if you want that built.
 
+### Deploying to Render
+
+The included `render.yaml` blueprint targets the existing `Dockerfile`
+as-is - Render runs it as one long-lived container (not per-request
+functions), so the local `flask_session/` directory persists across
+requests the way this app needs.
+
+1. On [render.com](https://render.com), **New > Blueprint**, pick this repo/branch. It reads `render.yaml` and creates the service (region `frankfurt`, free plan by default - edit `render.yaml` to change either).
+2. `SECRET_KEY` is generated automatically by the blueprint. Set `FRONTEND_ORIGIN` in the Render dashboard to your deployed frontend's exact origin (e.g. `https://openschool-umber.vercel.app` - no trailing slash, and list multiple as a comma-separated string if you have more than one).
+3. Once deployed, copy the service's `https://<name>.onrender.com` URL and set it as `VITE_API_URL=https://<name>.onrender.com/api` on the frontend (e.g. in Vercel's project env vars), then redeploy the frontend.
+4. Keep this service at a single instance - sessions live on that instance's local disk, so scaling to multiple replicas would (like Vercel) randomly lose sessions between requests, unless the session store is swapped for something shared like Redis.
+5. Render's free plan spins the service down after inactivity; the first request after idle can take ~30-60s to cold-start.
+
+Without the blueprint, the same works as **New > Web Service**, environment
+"Docker" (auto-detected from `Dockerfile`), with the env vars above set by
+hand.
+
 Required environment variables:
 
 - `SECRET_KEY` - required. Signs the session cookie.

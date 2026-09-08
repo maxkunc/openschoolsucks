@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: openschoolsucks
+    runtime: docker
+    plan: free
+    region: frankfurt
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: SESSION_COOKIE_SAMESITE
+        value: None
+      - key: SESSION_COOKIE_SECURE
+        value: "True"
