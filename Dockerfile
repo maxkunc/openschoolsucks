@@ -8,7 +8,7 @@ ARG FRONTEND_REPO=https://github.com/maxkunc/ispsjginjs.git
 ARG FRONTEND_REF=main
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git && \
+    apt-get install -y --no-install-recommends git ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 --branch ${FRONTEND_REF} ${FRONTEND_REPO} .
