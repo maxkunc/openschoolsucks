@@ -1,5 +1,17 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
 
+/* LED Counter-7 by Sizenko Alexander / Style-Seven (styleseven.com), freeware
+   for non-commercial/education use with credit, see static/fonts/led_counter-7-LICENSE.txt.
+   Only covers ASCII + Latin-1 (no Czech č/ř/ě/ů/...), so it is only used for
+   plain numeric readouts, never for Czech copy. */
+@font-face {
+    font-family: 'LED Counter';
+    src: url('/static/fonts/led_counter-7.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
 * {
     box-sizing: border-box;
 }
@@ -318,16 +330,24 @@ a[target=_blank]::after {
 }
 
 /* Grade badges, shared across pages */
+/* Digit-only LED readout, used for grade badges, stat numbers and pagination */
+.led-number {
+    font-family: 'LED Counter', 'Space Grotesk', monospace;
+    letter-spacing: 0.06em;
+    font-weight: normal;
+}
+
 .grade-badge {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     min-width: 2.4em;
-    padding: 4px 10px;
+    padding: 4px 10px 2px;
     border-radius: 999px;
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 700;
-    font-size: 15px;
+    font-family: 'LED Counter', 'Space Grotesk', monospace;
+    letter-spacing: 0.06em;
+    font-weight: normal;
+    font-size: 18px;
     color: #fff;
     background: var(--grade-none);
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
@@ -457,9 +477,10 @@ h2 {
 }
 
 .page-count {
-    font-variant-numeric: tabular-nums;
+    font-family: 'LED Counter', 'Space Grotesk', monospace;
+    letter-spacing: 0.06em;
     color: var(--text-dim);
-    font-size: 14px;
+    font-size: 16px;
 }
 
 .back-link {

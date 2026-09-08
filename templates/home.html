@@ -16,7 +16,7 @@
         <section class="stats-row">
             <div class="stat-card grade-card" data-grade="{{ stats.avg_grade_rounded }}">
                 <div class="stat-label">Průměr</div>
-                <div class="stat-value">{{ stats.avg_grade }}</div>
+                <div class="stat-value led-number">{{ stats.avg_grade }}</div>
                 <div class="stat-sub">{{ stats.subject_count }} předmětů</div>
             </div>
             <div class="stat-card">
@@ -25,7 +25,7 @@
             </div>
             <div class="stat-card">
                 <div class="stat-label">Zapsaných známek</div>
-                <div class="stat-value">{{ stats.grade_count }}</div>
+                <div class="stat-value led-number">{{ stats.grade_count }}</div>
             </div>
         </section>
 
