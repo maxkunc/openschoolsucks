@@ -1,5 +1,5 @@
 import pytest
-from app import app, znamka_from_percentage, build_home_stats, get_student_name
+from app import app, znamka_from_percentage, build_home_stats, get_student_name, get_exams
 
 @pytest.fixture()
 def client():
@@ -83,3 +83,40 @@ def test_get_student_name_falls_back_to_title():
 def test_get_student_name_none_when_neither_present():
     html = "<html><head></head><body><p>no name here</p></body></html>"
     assert get_student_name(html) is None
+
+
+# Real table structure confirmed by live inspection (see docs/investigate-is-psjg.md):
+# div.table-responsive > div.tf-wrapper > table.table, columns
+# Název | Datum | Třída/Skupina | Předmět | Čtvrtletní zkoušení
+def _zkouseni_html(rows_html: str) -> str:
+    return f"""
+    <html><body>
+      <div class="table-responsive">
+        <div class="tf-wrapper">
+          <table class="table">
+            <thead><tr><th>Název</th><th>Datum</th><th>Třída/Skupina</th><th>Předmět</th><th>Čtvrtletní zkoušení</th></tr></thead>
+            <tbody>{rows_html}</tbody>
+          </table>
+        </div>
+      </div>
+    </body></html>
+    """
+
+
+def test_get_exams_empty_table():
+    # Confirmed live: schools that don't use this feature genuinely have
+    # zero rows - this must come back as an empty list, not an error.
+    assert get_exams(_zkouseni_html("")) == []
+
+
+def test_get_exams_parses_rows():
+    html = _zkouseni_html("""
+        <tr><td>Ústní zkoušení</td><td>12.9.2026</td><td>3.A</td><td>Matematika</td><td>Ne</td></tr>
+    """)
+    assert get_exams(html) == [{
+        "name": "Ústní zkoušení",
+        "date": "12.9.2026",
+        "group": "3.A",
+        "subject": "Matematika",
+        "quarterly": "Ne",
+    }]

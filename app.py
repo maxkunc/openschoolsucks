@@ -316,6 +316,43 @@ def get_portfolio(text: str) -> dict:
     return portfoliodict
 
 
+def get_exams(text: str) -> list[dict]:
+    """Parses the Zkoušení (oral exam schedule) table from
+    is.psjg.cz/exam/student-view.
+
+    Confirmed by live inspection (see docs/investigate-is-psjg.md): unlike
+    grades/portfolio, this page has no CSV export component at all, so this
+    parses the rendered HTML table directly. Columns: Název, Datum,
+    Třída/Skupina, Předmět, Čtvrtletní zkoušení.
+
+    Args:
+        text (str): raw HTML from is.psjg.cz/exam/student-view
+
+    Returns:
+        list[dict]: exam rows (possibly empty - schools that don't use this
+        feature genuinely have zero rows, confirmed live, not a parsing bug)
+    """
+    soup = BeautifulSoup(text, "html.parser")
+    table = soup.select_one("div.table-responsive div.tf-wrapper table.table") or soup.find("table", class_="table")
+    if not table:
+        return []
+
+    body = table.find("tbody") or table
+    exams = []
+    for row in body.find_all("tr"):
+        cells = [delete_spaces(cell.get_text()) for cell in row.find_all(["td", "th"])]
+        if len(cells) < 5 or not any(cells):
+            continue
+        exams.append({
+            "name": cells[0],
+            "date": cells[1],
+            "group": cells[2],
+            "subject": cells[3],
+            "quarterly": cells[4],
+        })
+    return exams
+
+
 def get_semesters(text: str) -> tuple[list[str], int | None]:
     """Get list of semesters and which one is.psjg.cz currently has active.
 
@@ -836,14 +873,58 @@ def api_portfolio():
 
     return jsonify({"ok": True, **result["portfolio"]})
 
+def _load_zkouseni_data() -> dict:
+    """Shared pipeline for /api/zkouseni.
+
+    No studentId needed here (unlike portfolio/subject) - confirmed live
+    that /exam/student-view is scoped to the logged-in session directly.
+    """
+    saved_cookies = flask_session_custom.get('cookies')
+    if not saved_cookies:
+        return {"status": "redirect"}
+
+    session = requests.Session()
+    session.verify = certificate
+    session.cookies.update(saved_cookies)
+
+    response = session.get("https://is.psjg.cz/exam/student-view",
+                           params={"semesterId": flask_session_custom.get("semester")},
+                           headers=headers)
+
+    if response.status_code != 200:
+        return {"status": "error", "code": response.status_code}
+
+    if 'id="frm-signInForm-name"' in response.text:
+        flask_session_custom.pop('cookies', None)  # Delete old cookies
+        return {"status": "redirect"}
+
+    return {"status": "ok", "exams": get_exams(response.text)}
+
+
 @app.route('/api/zkouseni')
 def api_zkouseni():
-    """Placeholder JSON endpoint - the zkoušení feature itself is still WIP
-    upstream (see TODO.md), this just mirrors the auth check the HTML page had.
-    """
-    if not flask_session_custom.get('studentId'):
+    """JSON endpoint for Zkoušení (oral exam schedule)."""
+    if not flask_session_custom.get('cookies'):
         return jsonify({"ok": False, "error": "not_authenticated"}), 401
-    return jsonify({"ok": True, "implemented": False})
+
+    try:
+        result = _load_zkouseni_data()
+    except requests.exceptions.SSLError:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "ssl_error"}), 502
+    except requests.exceptions.ConnectionError:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "connection_error"}), 502
+    except Exception:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "unknown_error"}), 500
+
+    if result["status"] == "redirect":
+        return jsonify({"ok": False, "error": "not_authenticated"}), 401
+    if result["status"] == "error":
+        return jsonify({"ok": False, "error": "upstream_error", "code": result["code"]}), 502
+
+    return jsonify({"ok": True, "exams": result["exams"]})
 
 
 # --- React frontend (ispsjginjs), built into FRONTEND_DIST at image build time ---
