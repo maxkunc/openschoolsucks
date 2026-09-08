@@ -16,11 +16,11 @@
             <h1>Přihlásit se</h1>
             <div class="error">{{error}}</div>
             <form method="post" class="subcontainer">
-                <label for="name" class="grid1">Uživatelské jméno:</label>
-                <input type="text" id="username" name="username" required>
-                <label for="password">Heslo:</label>
-                <input type="password" id="password" name="password" required>
-                <input type="submit" value="Login">
+                <label for="username">Uživatelské jméno</label>
+                <input type="text" id="username" name="username" required autocomplete="username">
+                <label for="password">Heslo</label>
+                <input type="password" id="password" name="password" required autocomplete="current-password">
+                <input type="submit" value="Přihlásit se">
             </form>
         </div>
     </div>

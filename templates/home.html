@@ -10,85 +10,101 @@
 </head>
 
 <body id="home">
-    <div class="grid-main">
-        {% include 'includes/navbar.html' %}
-        <div class="grid2-main">
-            <div class="container">
+    {% include 'includes/navbar.html' %}
+    <main class="dashboard">
+
+        <section class="stats-row">
+            <div class="stat-card grade-card" data-grade="{{ stats.avg_grade_rounded }}">
+                <div class="stat-label">Průměr</div>
+                <div class="stat-value">{{ stats.avg_grade }}</div>
+                <div class="stat-sub">{{ stats.subject_count }} předmětů</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Nejlepší předmět</div>
+                <div class="stat-value stat-value-text">{{ stats.best_subject }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Zapsaných známek</div>
+                <div class="stat-value">{{ stats.grade_count }}</div>
+            </div>
+        </section>
+
+        <section class="grid-two">
+            <div class="panel">
+                <h2>Předměty</h2>
                 {% if subjects[0] == -1 %}
-                <p style="text-align:center;">Nenalezeny žádné předměty</p>
+                <p class="empty-state">Nenalezeny žádné předměty</p>
                 {% else %}
-                <!-- id, název, známka, finální známka, body, procenta -->
-                {% for i in subjects %}
-                <a href="{{ url_for('subject', subject_id=i[0]) }}">
-                    <div class="grid">
-                        <div class="grid1">{{i[1]}}
-                            <hr class="hr-display">
-                        </div>
-                        <div class="grid2">{{i[2]}}</div>
-                        <div class="grid3">{{i[4]}}</div>
-                        <div class="grid4">{{i[5]}}</div>
-                    </div>
-                </a>
-                {% endfor %}
+                <div class="subject-list">
+                    {% for i in subjects %}
+                    <a href="{{ url_for('subject', subject_id=i[0]) }}" class="subject-row">
+                        <span class="subject-name">{{ i[1] }}</span>
+                        <span class="grade-badge" data-grade="{{ i[2][0] if i[2] and i[2][0] in ['1','2','3','4','5'] else 'none' }}">{{ i[2] }}</span>
+                        <span class="subject-meta">{{ i[4] }}</span>
+                        <span class="subject-meta">{{ i[5] }} b.</span>
+                    </a>
+                    {% endfor %}
+                </div>
                 {% endif %}
             </div>
-        </div>
-        <div class="grid3-main">
-            <div class="container">
-                <img src="{{ url_for('static',filename='images/graf.png') }}"
-                    style="width:min-content; width:min-content;">
 
-                <div class="in-progress" style="align-items: center;">
-                    <h1>🚧🚧🚧🚧🚧🚧🚧🚧</h1>
+            <div class="panel wip-panel">
+                <h2>Statistiky</h2>
+                <div class="wip-body">
+                    <div class="wip-badge">🚧 Připravujeme</div>
+                    <p class="wip-text">Grafy vývoje známek jsou ve vývoji.</p>
                 </div>
             </div>
-        </div>
+        </section>
 
-        <div class="grid4-main" id="znamky">
-            <div class="container">
-                <!-- navigace -->
-                {% if znamky[0] == -1 %}
-                <p style="text-align:center;">Nenalezeny žádné známky</p>
-                {% else %}
-                <div class="grid-navigace">
-
-                    {% if current > 1 %}
-                    <a href="{{ url_for('home', page=current - 1, _anchor='znamky' ) }}">
-                        <div class="grid-navigace-1">
-                            < </div>
-                    </a> <!-- známka -->
-                    {% else %}
+        <section class="panel grades-panel" id="znamky">
+            <h2>Poslední známky</h2>
+            {% if znamky[0] == -1 %}
+            <p class="empty-state">Nenalezeny žádné známky</p>
+            {% else %}
+            <div class="grades-list">
+                <div class="grade-row grade-row-head">
                     <span></span>
-                    {% endif %}
-
-                    {% if current < total %} <a href="{{ url_for('home', page=current + 1, _anchor='znamky' ) }}">
-                        <div class="grid-navigace-2"> > </div>
-                        </a> <!-- předmět -->
-                        {% else %}
-                        <span></span>
-                        {% endif %}
-
-
-                        <div class="grid-navigace-3">{{ current }} / {{ total }}</div> <!-- datum -->
-
+                    <span>Předmět</span>
+                    <span class="col-extra">Název</span>
+                    <span class="col-extra">Datum</span>
+                    <span class="col-highlight">Procenta</span>
+                    <span class="col-extra">Body</span>
                 </div>
-                <hr style="width: 100%; border: 1px solid black; border-radius: 5px;">
-                <!-- datum, název, předmět, procenta, body, popis, známka -->
-                {%for row in znamky%}
-                <div class="grid-znamka">
-                    <div class="grid-znamka-1">{{row[6]}}</div> <!-- známka -->
-                    <div class="grid-znamka-2">{{row[0]}}</div> <!-- datum -->
-                    <div class="grid-znamka-3">{{row[1]}}</div> <!-- název -->
-                    <div class="grid-znamka-4">{{row[3]}}</div> <!-- procenta -->
-                    <div class="grid-znamka-5">{{row[4]}}</div> <!-- body -->
-                    <div class="grid-znamka-6">{{row[5]}}</div> <!-- popis -->
-                    <div class="grid-znamka-7">{{row[2]}}</div> <!-- předmět -->
+                {% for row in znamky %}
+                <div class="grade-row">
+                    <span class="grade-badge" data-grade="{{ row[6] if row[6] in [1,2,3,4,5] else 'none' }}">{{ row[6] }}</span>
+                    <span class="cell-primary">{{ row[2] }}</span>
+                    <span class="col-extra">{{ row[1] }}</span>
+                    <span class="cell-dim col-extra">{{ row[0] }}</span>
+                    <span class="col-highlight">{{ row[3] }}</span>
+                    <span class="col-extra">{{ row[4] }}</span>
                 </div>
-                {%endfor%}
-                {%endif%}
+                {% endfor %}
             </div>
-        </div>
-    </div>
+
+            <div class="pagination">
+                {% if current > 1 %}
+                <a href="{{ url_for('home', page=current - 1, _anchor='znamky') }}" class="page-arrow" aria-label="Předchozí strana">
+                    <span class="icon-mask icon-arrow-left"></span>
+                </a>
+                {% else %}
+                <span class="page-arrow page-arrow-disabled"><span class="icon-mask icon-arrow-left"></span></span>
+                {% endif %}
+
+                <span class="page-count">{{ current }} / {{ total }}</span>
+
+                {% if current < total %}
+                <a href="{{ url_for('home', page=current + 1, _anchor='znamky') }}" class="page-arrow" aria-label="Další strana">
+                    <span class="icon-mask icon-arrow-right"></span>
+                </a>
+                {% else %}
+                <span class="page-arrow page-arrow-disabled"><span class="icon-mask icon-arrow-right"></span></span>
+                {% endif %}
+            </div>
+            {% endif %}
+        </section>
+    </main>
 </body>
 
 </html>

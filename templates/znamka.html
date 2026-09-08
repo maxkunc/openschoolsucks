@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="cs">
 
 <head>
     <meta charset="UTF-8">
@@ -10,33 +10,40 @@
 </head>
 
 <body id="znamka">
-    <div class="grid-main">
-        {% include 'includes/navbar.html' %}
-        <div class="grid2-main">
-            <div class="container">
-                <!-- heading -->
-                <div class="grid">
-                    <div class="grid1"><b>Známka</b></div>
-                    <div class="grid2"><b>Datum</b> </div>
-                    <div class="grid3"><b>Název</b></div>
-                    <div class="grid4"><b>Procenta</b></div>
-                    <div class="grid5"><b>Body</b></div>
-                    <div class="grid6"><b>Popis</b></div>
+    {% include 'includes/navbar.html' %}
+    <main class="subject-page">
+        <a href="{{ url_for('home') }}" class="back-link">
+            <span class="icon-mask icon-arrow-left"></span>
+            Zpět na přehled
+        </a>
+
+        <section class="panel">
+            {% if znamky|length == 0 %}
+            <p class="empty-state">Nenalezeny žádné známky</p>
+            {% else %}
+            <div class="grades-list">
+                <div class="grade-row grade-row-head">
+                    <span></span>
+                    <span class="col-extra">Datum</span>
+                    <span>Název</span>
+                    <span class="col-highlight">Procenta</span>
+                    <span class="col-extra">Body</span>
+                    <span class="col-extra">Popis</span>
                 </div>
-                <hr style="width: 100%; border: 1px solid black; border-radius: 5px;">
-                {%for row in znamky%}
-                <div class="grid">
-                    <div class="grid1">{{row[7]}}</div>
-                    <div class="grid2">{{row[0]}}</div>
-                    <div class="grid3">{{row[1]}}</div>
-                    <div class="grid4">{{row[5]}}</div>
-                    <div class="grid5">{{row[4]}}</div>
-                    <div class="grid6">{{row[6]}}</div>
+                {% for row in znamky %}
+                <div class="grade-row">
+                    <span class="grade-badge" data-grade="{{ row[7] if row[7] in [1,2,3,4,5] else 'none' }}">{{ row[7] }}</span>
+                    <span class="cell-dim col-extra">{{ row[0] }}</span>
+                    <span class="cell-primary">{{ row[1] }}</span>
+                    <span class="col-highlight">{{ row[5] }}</span>
+                    <span class="col-extra">{{ row[4] }}</span>
+                    <span class="cell-dim col-extra">{{ row[6] }}</span>
                 </div>
-                {%endfor%}
+                {% endfor %}
             </div>
-        </div>
-    </div>
+            {% endif %}
+        </section>
+    </main>
 </body>
 
 </html>

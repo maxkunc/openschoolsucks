@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="cs">
 
 <head>
     <meta charset="UTF-8">
@@ -10,58 +10,45 @@
 </head>
 
 <body>
-    <div class="grid-main">
-        {% include 'includes/navbar.html' %}
-        <div class="grid2-main">
-            <div class="container-main">
+    {% include 'includes/navbar.html' %}
+    <main class="portfolio-page">
 
-                <div class="container-total">
-                    <div style="text-align: right;">
-                        Pořadí ve třídě: {{ portfolio["place"] }}
-                    </div>
-                    <div style="text-align: left;">
-                        Celkem: {{ portfolio["points"] }}
-                    </div>
+        <section class="stats-row">
+            <div class="stat-card">
+                <div class="stat-label">Pořadí ve třídě</div>
+                <div class="stat-value">{{ portfolio["place"] }}.</div>
+            </div>
+            <div class="stat-card stat-card-accent">
+                <div class="stat-label">Celkem bodů</div>
+                <div class="stat-value">{{ portfolio["points"] }}</div>
+            </div>
+        </section>
+
+        {% if portfolio["data"] is defined and portfolio["data"]|length > 0 %}
+        <section class="category-list">
+            {% for data in portfolio["data"] %}
+            <div class="panel category-card">
+                <div class="category-head">
+                    <h2 class="category-title">{{ data["name"] }}</h2>
+                    <span class="pill">{{ data["points"] }} b.</span>
                 </div>
 
-                {% if portfolio["data"] is defined and portfolio["data"]|length > 0%}
-                <div class="container">
-                    {% for data in portfolio["data"] %}
-                    <div class="grid">
-                        <div class="grid1">
-                            <h2>{{ data["name"] }}</h2>
-                        </div>
-
-                        <div class="grid2">
-                            <h2>{{ data["points"] }}</h2>
-                        </div>
-
-                        <div class="grid3">
-                            {% for item in data["items"] %}
-                            <div class="grid-portfolio">
-
-                                <div class="grid-portfolio-1">
-                                    {{ item["name"] }}
-                                </div>
-
-                                <div class="grid-portfolio-2">
-                                    {{ item["description"] }}
-                                </div>
-
-                                <div class="grid-portfolio-3">
-                                    {{ item["points"] }}
-                                </div>
-
-                            </div>
-                            {% endfor %}
-                        </div>
+                <div class="item-list">
+                    {% for item in data["items"] %}
+                    <div class="item-row">
+                        <span class="item-name">{{ item["name"] }}</span>
+                        <span class="item-description">{{ item["description"] }}</span>
+                        <span class="item-points">{{ item["points"] }} b.</span>
                     </div>
                     {% endfor %}
                 </div>
-                {% endif %}
             </div>
-        </div>
-    </div>
+            {% endfor %}
+        </section>
+        {% else %}
+        <p class="empty-state">Nenalezeny žádné položky portfolia</p>
+        {% endif %}
+    </main>
 </body>
 
 </html>

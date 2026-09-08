@@ -119,10 +119,11 @@ def get_info(text: str) -> int:
         abort(500, f"Found {len(search)} student ids")
 
     href = search[0].a["href"]
+    id_part = href[href.rfind("/") + 1:href.find("?") if "?" in href else None]
     try:
-        student_id = int(href[href.rfind("/") + 1:href.find("?") if "?" in href else None])
+        student_id = int(id_part)
     except ValueError:
-        abort(500, f"Failed to convert to integer {href[href.rfind("/") + 1:]}")
+        abort(500, f"Failed to convert to integer {id_part}")
 
     return student_id
 
@@ -309,6 +310,53 @@ def znamka_from_percentage(percentage) -> int | str:
         return 0
 
 
+def parse_grade(value) -> float | None:
+    """Parse a Czech grade value (e.g. "1", "1,5", "N", "-") into a float, if possible
+
+    Args:
+        value: Raw grade value
+
+    Returns:
+        float | None: Parsed grade or None if it isn't a plain numeric grade
+    """
+    try:
+        return float(str(value).strip().replace(",", "."))
+    except (ValueError, TypeError):
+        return None
+
+
+def build_home_stats(subjects_display: list, znamky: list) -> dict:
+    """Build small dashboard stats (average grade, best subject, counts) from home page data
+
+    Args:
+        subjects_display (list): Rows of [id, name, known_grade, final_grade, percentage, points]
+        znamky (list): Rows of individual grades
+
+    Returns:
+        dict: Stats for the dashboard cards
+    """
+    graded_subjects = [row for row in subjects_display if parse_grade(row[2]) is not None]
+
+    if graded_subjects:
+        average = sum(parse_grade(row[2]) for row in graded_subjects) / len(graded_subjects)
+        best = min(graded_subjects, key=lambda row: parse_grade(row[2]))
+        avg_grade = f"{average:.2f}".rstrip("0").rstrip(".")
+        avg_grade_rounded = round(average)
+        best_subject = best[1]
+    else:
+        avg_grade = "–"
+        avg_grade_rounded = None
+        best_subject = "–"
+
+    return {
+        "subject_count": len(subjects_display),
+        "grade_count": len(znamky),
+        "avg_grade": avg_grade,
+        "avg_grade_rounded": avg_grade_rounded,
+        "best_subject": best_subject,
+    }
+
+
 def split_percentage_and_points(text: str) -> tuple[int, int]:
     """Splits percentage and points from one text (see example from comment below) into tuple
 
@@ -394,13 +442,14 @@ def home():
         fieldnames = ["id", "Předmět", "Bodové hodnocení", "Známka", "Výsledná známka"]  # List of column names for CSV file
         subjects = get_csv_subjects(mainpage_response.text, fieldnames).values.tolist()
 
-        if mainpage_response.status_code == 200:
-            if 'id="frm-signInForm-name"' in mainpage_response.text:
-                flask_session_custom.pop('cookies', None)  # Delete old cookies
-                return redirect(url_for("login"))
+        if mainpage_response.status_code != 200:
+            return render_template("error.html", error=f"response code {mainpage_response.status_code}", traceback="")
 
-            student_info = get_info(mainpage_response.text)
+        if 'id="frm-signInForm-name"' in mainpage_response.text:
+            flask_session_custom.pop('cookies', None)  # Delete old cookies
+            return redirect(url_for("login"))
 
+        student_info = get_info(mainpage_response.text)
         flask_session_custom["studentId"] = student_info
         responseGrid = session.get("https://is.psjg.cz",
                                    params={
@@ -431,24 +480,27 @@ def home():
                 percentage, points = split_percentage_and_points(row[2])
                 subjects_display.append([row[0], row[1], row[3], row[4], percentage, points])
 
+            # Compute quick stats for the dashboard before the -1 sentinels are appended
+            stats = build_home_stats(subjects_display, csvlist)
+
             # Check for no grades or subjects
             if len(subjects_display) == 0:
                 subjects_display.append(-1)
             if len(csvlist) == 0:
                 csvlist.append(-1)
 
-            page = request.args.get('page', 1, type=int)
             per_page = 10
+            total_pages = (len(csvlist) + per_page - 1) // per_page
+            page = min(max(request.args.get('page', 1, type=int), 1), total_pages)
             start = (page - 1) * per_page
             end = start + per_page
-            total_pages = (len(csvlist) + per_page - 1) // per_page
 
             # semesters
             semesters = get_semesters(mainpage_response.text)
             flask_session_custom["semesters"] = semesters
 
             # Render the template
-            return render_template("home.html", subjects=subjects_display, znamky=csvlist[start:end], current=page, total=total_pages)
+            return render_template("home.html", subjects=subjects_display, znamky=csvlist[start:end], current=page, total=total_pages, stats=stats)
         else:
             return render_template("error.html", error=f"response code {responseGrid.status_code}", traceback="")
     except Exception as e:

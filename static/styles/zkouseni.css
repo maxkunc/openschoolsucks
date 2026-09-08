@@ -1,13 +1,13 @@
-.error-page {
+.wip-page {
     min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: calc(var(--navbar-height) + 24px) 24px 24px;
 }
 
-.error-card {
-    max-width: 440px;
+.wip-card {
+    max-width: 420px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -15,27 +15,24 @@
     gap: 12px;
 }
 
-.error-badge {
+.wip-card .wip-badge {
     padding: 4px 14px;
     border-radius: 999px;
-    background: var(--grade-5);
-    color: #fff;
+    background-color: var(--surface-2);
     font-family: 'Space Grotesk', sans-serif;
     font-weight: 600;
-    font-size: 13px;
+    font-size: 14px;
 }
 
-.error-card h1 {
+.wip-card h1 {
     font-size: 20px;
 }
 
-.error-detail {
+.wip-card p {
     color: var(--text-dim);
-    font-size: 14px;
     margin: 0;
-    word-break: break-word;
 }
 
-.error-card .back-link {
+.wip-card .back-link {
     margin-top: 12px;
 }

@@ -1,67 +1,78 @@
 <nav class="grid1-main">
+    <a href="{{ url_for('home') }}" class="brand">
+        <span class="brand-dot"></span>
+        OpenSchoolSucks
+    </a>
+
     <div class="topnav">
-        <a href="{{ url_for('home') }}">Domů</a>
-        <a href="{{ url_for('portfolio') }}">Portfolio</a>
-        <a href="{{ url_for('zkouseni') }}">Zkoušení</a>
+        <a href="{{ url_for('home') }}" class="{{ 'active' if request.endpoint == 'home' }}">Domů</a>
+        <a href="{{ url_for('portfolio') }}" class="{{ 'active' if request.endpoint == 'portfolio' }}">Portfolio</a>
+        <a href="{{ url_for('zkouseni') }}" class="{{ 'active' if request.endpoint == 'zkouseni' }}">Zkoušení</a>
     </div>
 
-    <div id="sidenav" class="sidenav">
-        <form name="semester" method="post" id="semester" class="semesterform">
-            <select name="year" onchange='if(this.value != 0) {this.form.submit();}' id="semesterselect">
-                {% for x, i in semesters %}
-                {% if x + 1 == selectedSemester %}
-                <option selected>{{ i }}</option>
-                {% else %}
-                <option>{{ i }}</option>
-                {% endif %}
-                {%endfor%}
-            </select>
-        </form>
-        {# <a href="{{ url_for('settings') }}">Nastavení</a> #}
-        {#<a href="{{ url_for('about') }}">O projektu</a> #}
-        <a href="https://github.com/Krupicova12Kase/OpenSchoolSucks" target="_blank" rel="noopener noreferrer"
-            class="external-link">Zdrojový kód</a>
-        <a href="https://github.com/Krupicova12Kase/OpenSchoolSucks/issues" target="_blank"
-            rel="noopener noreferrer">Nahlásit problém</a>
-        <a href="{{ url_for('logout') }}">Odhlásit se</a>
-    </div>
-
-    <span class="sidenavopenbutton" onclick="Nav()" id="openButton">&#9776;</span>
-
-    <script>
-        const sidenav = document.getElementById("sidenav");
-        const openButton = document.getElementById("openButton");
-        const semesterForm = document.getElementById("semester")
-        const SemesterSelect = document.getElementById("semesterselect")
-
-        function Nav() {
-            if (sidenav.style.width === "0px" || !sidenav.style.width) {
-                sidenav.style.width = "240px";
-            } else {
-                sidenav.style.width = "0px";
-            }
-        }
-
-        function closeNav() {
-            sidenav.style.width = "0";
-        }
-
-        document.addEventListener("click", function (event) {
-            const isOpen = sidenav.style.width === "200px";
-            const clickedInsideNav = sidenav.contains(event.target);
-            const clickedOpenButton = openButton.contains(event.target);
-            const clickedSemesterSelect = SemesterSelect.contains(event.target)
-
-            if (clickedSemesterSelect && SemesterSelect.style.borderRadius === "6px") {
-                SemesterSelect.style.borderRadius = "0px"
-            } else {
-                SemesterSelect.style.borderRadius = "6px"
-            }
-            // close when clicked outside
-            if (isOpen && !clickedInsideNav && !clickedOpenButton) {
-                closeNav();
-            }
-        });
-
-    </script>
+    <span class="sidenavopenbutton" onclick="toggleNav()" id="openButton">&#9776;</span>
 </nav>
+
+<div class="sidenav-backdrop" id="sidenavBackdrop" onclick="closeNav()"></div>
+
+<div id="sidenav" class="sidenav">
+    <form name="semester" method="post" id="semester" class="semesterform">
+        <select name="year" onchange='if(this.value != 0) {this.form.submit();}' id="semesterselect">
+            {% for x, i in semesters %}
+            {% if x + 1 == selectedSemester %}
+            <option selected>{{ i }}</option>
+            {% else %}
+            <option>{{ i }}</option>
+            {% endif %}
+            {%endfor%}
+        </select>
+    </form>
+
+    <hr class="sidenav-divider">
+
+    <a href="{{ url_for('home') }}">Domů</a>
+    <a href="{{ url_for('portfolio') }}">Portfolio</a>
+    <a href="{{ url_for('zkouseni') }}">Zkoušení</a>
+
+    <hr class="sidenav-divider">
+
+    {# <a href="{{ url_for('settings') }}">Nastavení</a> #}
+    {#<a href="{{ url_for('about') }}">O projektu</a> #}
+    <a href="https://github.com/Krupicova12Kase/OpenSchoolSucks" target="_blank" rel="noopener noreferrer"
+        class="external-link">Zdrojový kód</a>
+    <a href="https://github.com/Krupicova12Kase/OpenSchoolSucks/issues" target="_blank"
+        rel="noopener noreferrer">Nahlásit problém</a>
+    <a href="{{ url_for('logout') }}">Odhlásit se</a>
+</div>
+
+<script>
+    const sidenav = document.getElementById("sidenav");
+    const sidenavBackdrop = document.getElementById("sidenavBackdrop");
+    const openButton = document.getElementById("openButton");
+
+    function toggleNav() {
+        sidenav.classList.toggle("open");
+        sidenavBackdrop.classList.toggle("open");
+    }
+
+    function closeNav() {
+        sidenav.classList.remove("open");
+        sidenavBackdrop.classList.remove("open");
+    }
+
+    document.addEventListener("click", function (event) {
+        const isOpen = sidenav.classList.contains("open");
+        const clickedInsideNav = sidenav.contains(event.target);
+        const clickedOpenButton = openButton.contains(event.target);
+
+        if (isOpen && !clickedInsideNav && !clickedOpenButton) {
+            closeNav();
+        }
+    });
+
+    document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+            closeNav();
+        }
+    });
+</script>

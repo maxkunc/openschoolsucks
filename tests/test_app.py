@@ -13,7 +13,7 @@ def client():
 def test_request_login(client):
     response = client.get("/")
     assert response.status_code == 200
-    assert b'<input type="submit" value="Login">' in response.data
+    assert b'<input type="submit" value="P\xc5\x99ihl\xc3\xa1sit se">' in response.data
 
 def test_grade_calculation():
     assert znamka_from_percentage("100%") == 1

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="cs">
 
 <head>
     <meta charset="UTF-8">
@@ -10,9 +10,19 @@
 </head>
 
 <body id="error">
-    <h1>Máťa něco pokazil...</h1>
-    <br>
-    <div style="color: red;">{{ message }}</div>
+    <main class="error-page">
+        <div class="panel error-card">
+            <div class="error-badge">Chyba</div>
+            <h1>Máťa něco pokazil...</h1>
+            {% if error or message %}
+            <p class="error-detail">{{ error or message }}</p>
+            {% endif %}
+            <a href="{{ url_for('login') }}" class="back-link">
+                <span class="icon-mask icon-arrow-left"></span>
+                Zpět na přihlášení
+            </a>
+        </div>
+    </main>
 </body>
 
 </html>

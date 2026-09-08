@@ -1,3 +1,27 @@
-<a href="{{ url_for('home') }}">Zpět</a>
-<br>
-<h1>Work in progress</h1>
+<!DOCTYPE html>
+<html lang="cs">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenSchoolSucks - Zkoušení</title>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static',filename='styles/global.css') }}">
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static',filename='styles/zkouseni.css') }}">
+</head>
+
+<body>
+    {% include 'includes/navbar.html' %}
+    <main class="wip-page">
+        <div class="panel wip-card">
+            <div class="wip-badge">🚧 Připravujeme</div>
+            <h1>Zkoušení je ve vývoji</h1>
+            <p>Tahle stránka zatím nic neumí, ale pracujeme na tom.</p>
+            <a href="{{ url_for('home') }}" class="back-link">
+                <span class="icon-mask icon-arrow-left"></span>
+                Zpět na přehled
+            </a>
+        </div>
+    </main>
+</body>
+
+</html>
