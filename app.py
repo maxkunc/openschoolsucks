@@ -439,6 +439,10 @@ def login():
         print(traceback.format_exc())
         return render_template("error.html", message=f"Zkuste obnovit stránku. Použitý certifikát: {certificate_file}" if True else "Nepodařilo se najít funkční certifikát.")
 
+    except requests.exceptions.ConnectionError as e:
+        print(traceback.format_exc())
+        return render_template("error.html", message="Nelze se připojit k is.psjg.cz. Zkontroluj síťové připojení serveru (firewall, proxy) - viz server log pro detail.")
+
     except Exception as e:
         print(traceback.format_exc())
         return render_template("error.html", message="")
@@ -551,6 +555,12 @@ def home():
 
         # Render the template
         return render_template("home.html", subjects=subjects_display, znamky=znamky, current=page, total=total_pages, stats=result["stats"])
+    except requests.exceptions.SSLError as e:
+        print(traceback.format_exc())
+        return render_template("error.html", message=f"Zkuste obnovit stránku. Použitý certifikát: {certificate_file}" if True else "Nepodařilo se najít funkční certifikát.")
+    except requests.exceptions.ConnectionError as e:
+        print(traceback.format_exc())
+        return render_template("error.html", message="Nelze se připojit k is.psjg.cz. Zkontroluj síťové připojení serveru (firewall, proxy) - viz server log pro detail.")
     except Exception as e:
         print(traceback.format_exc())
         return render_template("error.html", message="")
@@ -595,6 +605,12 @@ def api_login():
     except requests.exceptions.SSLError:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "ssl_error"}), 502
+    except requests.exceptions.ConnectionError:
+        # Backend couldn't reach is.psjg.cz at all (DNS, firewall, proxy, host
+        # network policy, ...) - distinct from a bug in this app, and from
+        # SSLError above (a ConnectionError subclass, so it must come after it).
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "connection_error"}), 502
     except Exception:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "unknown_error"}), 500
@@ -625,6 +641,12 @@ def api_home():
 
     try:
         result = _load_home_data()
+    except requests.exceptions.SSLError:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "ssl_error"}), 502
+    except requests.exceptions.ConnectionError:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "connection_error"}), 502
     except Exception:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "unknown_error"}), 500
@@ -717,6 +739,10 @@ def subject(subject_id: int):
         print(traceback.format_exc())
         return render_template("error.html", message=f"Zkuste obnovit stránku. Použitý certifikát: {certificate_file}" if True else "Nepodařilo se najít funkční certifikát.")
 
+    except requests.exceptions.ConnectionError as e:
+        print(traceback.format_exc())
+        return render_template("error.html", message="Nelze se připojit k is.psjg.cz. Zkontroluj síťové připojení serveru (firewall, proxy) - viz server log pro detail.")
+
     except Exception as e:
         print(traceback.format_exc())
         return render_template("error.html", message="")
@@ -733,6 +759,9 @@ def api_subject(subject_id: int):
     except requests.exceptions.SSLError:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "ssl_error"}), 502
+    except requests.exceptions.ConnectionError:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "connection_error"}), 502
     except Exception:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "unknown_error"}), 500
@@ -793,6 +822,10 @@ def portfolio():
         print(traceback.format_exc())
         return render_template("error.html", message=f"Zkuste obnovit stránku. Použitý certifikát: {certificate_file}" if True else "Nepodařilo se najít funkční certifikát.")
 
+    except requests.exceptions.ConnectionError as e:
+        print(traceback.format_exc())
+        return render_template("error.html", message="Nelze se připojit k is.psjg.cz. Zkontroluj síťové připojení serveru (firewall, proxy) - viz server log pro detail.")
+
     except Exception as e:
         print(traceback.format_exc())
         return render_template("error.html", message="")
@@ -809,6 +842,9 @@ def api_portfolio():
     except requests.exceptions.SSLError:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "ssl_error"}), 502
+    except requests.exceptions.ConnectionError:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "connection_error"}), 502
     except Exception:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "unknown_error"}), 500
