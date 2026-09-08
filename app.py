@@ -7,6 +7,7 @@
 # Imports
 import traceback
 from flask import Flask, flash, request, redirect, url_for, render_template, jsonify, abort, session as flask_session_custom
+from flask_session import Session
 import os
 import tempfile
 import requests
@@ -19,6 +20,7 @@ import re
 import pandas as pd
 from dotenv import load_dotenv
 from colorama import init, Fore
+from cachelib import FileSystemCache
 from cert_chain_resolver.api import resolve
 
 # Load environment variables
@@ -27,10 +29,13 @@ load_dotenv(override=True)
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY')
 
-# Signed, client-side cookie session (Flask's default). Kept deliberately small
-# (auth cookies + a few ids) so it fits in a single cookie - this also makes the
-# app work on stateless/serverless hosts (e.g. Vercel) with no server-side store.
+# Server side session: the real is.psjg.cz auth cookies are too large to fit in a
+# single signed client-side cookie, so this has to be a server-side store.
+# NOTE: this means the app needs a persistent/writable filesystem and does NOT work
+# on stateless serverless hosts (e.g. Vercel) - see README for that tradeoff.
 app.config["SESSION_PERMANENT"] = False
+app.config["SESSION_TYPE"] = "cachelib"
+app.config["SESSION_CACHELIB"] = FileSystemCache(cache_dir="flask_session")
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 headers = {
@@ -38,6 +43,8 @@ headers = {
     'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
 }
+
+Session(app)
 
 
 # CERTIFICATES
