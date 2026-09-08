@@ -163,6 +163,44 @@ def get_info(text: str) -> int:
     return student_id
 
 
+def get_student_name(text: str) -> str | None:
+    """Best-effort extraction of the student's real name from mainpage HTML.
+
+    NOTE: unverified against a real, logged-in is.psjg.cz page - this app
+    has no way to check that from here. If it comes back None (or wrong),
+    the frontend just falls back to a generic "Student" label, so this is
+    safe to guess at; tighten it up if it doesn't find the real name.
+
+    Args:
+        text (str): raw HTML from is.psjg.cz
+
+    Returns:
+        str | None: the student's name, or None if nothing plausible was found
+    """
+    soup = BeautifulSoup(text, "html.parser")
+
+    def looks_like_name(candidate: str) -> str | None:
+        candidate = delete_spaces(candidate)
+        if candidate and " " in candidate and 3 < len(candidate) < 60:
+            return candidate
+        return None
+
+    # The portfolio link is sometimes labelled with the student's own name
+    portfolio_link = soup.find(title="Téma studentského portfolia")
+    if portfolio_link:
+        name = looks_like_name(portfolio_link.get_text())
+        if name:
+            return name
+
+    # <title>Jan Novák - is.psjg.cz</title>-style pages
+    if soup.title and soup.title.string:
+        name = looks_like_name(re.split(r"[-|:]", soup.title.string)[0])
+        if name:
+            return name
+
+    return None
+
+
 def get_csv_subjects(text: str, fieldnames: list) -> pd.DataFrame:
     """Get subjects from HTML of mainpage
 
@@ -284,24 +322,28 @@ def get_portfolio(text: str) -> dict:
     return portfoliodict
 
 
-def get_semesters(text: str) -> list[str]:
-    """Get list of semesters. Example return: [2026/27 - První pololetí, 2026/27 - Druhé pololetí]
+def get_semesters(text: str) -> tuple[list[str], int | None]:
+    """Get list of semesters and which one is.psjg.cz currently has active.
+
+    Example return: (["2026/27 - První pololetí", "2026/27 - Druhé pololetí"], 0)
 
     Args:
         text (str): HTML from homepage of is.psjg.cz
 
     Returns:
-        list[str]: List of semesters.
+        tuple[list[str], int | None]: (semester labels, 0-based index of the
+        <option> is.psjg.cz marked selected - i.e. its own default when no
+        semesterId was requested - or None if that couldn't be determined)
     """
 
     soup = BeautifulSoup(text, "html.parser")
     select = soup.find_all("select", id="frm-switchSemester-semester")
-    option_elements = []
+    options = select[0].find_all("option") if select else []
 
-    for option in select[0]:
-        option_elements.append(option.text)
+    labels = [option.text for option in options]
+    selected_index = next((i for i, o in enumerate(options) if o.has_attr("selected")), None)
 
-    return option_elements
+    return labels, selected_index
 
 
 def get_semester_number(semester: str) -> int:
@@ -360,6 +402,21 @@ def parse_grade(value) -> float | None:
         return None
 
 
+def parse_percent_value(value) -> float | None:
+    """Parse a percentage value like "91,75%" into a float, if possible.
+
+    Args:
+        value: Raw percentage value
+
+    Returns:
+        float | None: Parsed percentage or None if it isn't a plain numeric one
+    """
+    try:
+        return float(str(value).strip().replace("%", "").replace(",", "."))
+    except (ValueError, TypeError):
+        return None
+
+
 def build_home_stats(subjects_display: list, znamky: list) -> dict:
     """Build small dashboard stats (average grade, best subject, counts) from home page data
 
@@ -374,13 +431,20 @@ def build_home_stats(subjects_display: list, znamky: list) -> dict:
 
     if graded_subjects:
         average = sum(parse_grade(row[2]) for row in graded_subjects) / len(graded_subjects)
-        best = min(graded_subjects, key=lambda row: parse_grade(row[2]))
         avg_grade = f"{average:.2f}".rstrip("0").rstrip(".")
         avg_grade_rounded = round(average)
-        best_subject = best[1]
     else:
         avg_grade = "–"
         avg_grade_rounded = None
+
+    # "Best subject" is ranked by percentage, not by grade (grades round percentages
+    # into 5 wide buckets, so several subjects usually tie on grade alone).
+    scored_subjects = [row for row in subjects_display if parse_percent_value(row[4]) is not None]
+    if scored_subjects:
+        best_subject = max(scored_subjects, key=lambda row: parse_percent_value(row[4]))[1]
+    elif graded_subjects:
+        best_subject = min(graded_subjects, key=lambda row: parse_grade(row[2]))[1]
+    else:
         best_subject = "–"
 
     return {
@@ -466,12 +530,26 @@ def _load_home_data() -> dict:
         flask_session_custom.pop('cookies', None)  # Delete old cookies
         return {"status": "redirect"}
 
+    student_info = get_info(mainpage_response.text)
+    flask_session_custom["studentId"] = student_info
+
+    student_name = get_student_name(mainpage_response.text)
+    if student_name:
+        flask_session_custom["studentName"] = student_name
+
+    # semesters - and, if nothing was explicitly chosen yet this session,
+    # resolve which one is.psjg.cz defaulted to (the <option> it marked
+    # selected) so the dropdown reflects the real current semester on first
+    # load instead of drifting from whatever data is actually being shown.
+    semesters, selected_index = get_semesters(mainpage_response.text)
+    flask_session_custom["semesters"] = semesters
+    if flask_session_custom.get("semester") is None and selected_index is not None:
+        flask_session_custom["semester"] = get_semester_number(semesters[selected_index])
+
     # Get subjects from HTML response and write them to CSV file
     fieldnames = ["id", "Předmět", "Bodové hodnocení", "Známka", "Výsledná známka"]  # List of column names for CSV file
     subjects = get_csv_subjects(mainpage_response.text, fieldnames).values.tolist()
 
-    student_info = get_info(mainpage_response.text)
-    flask_session_custom["studentId"] = student_info
     responseGrid = session.get("https://is.psjg.cz",
                                params={
                                    "studentScoreGrid-id": 1,
@@ -501,10 +579,6 @@ def _load_home_data() -> dict:
         subjects_display.append([row[0], row[1], row[3], row[4], percentage, points])
 
     stats = build_home_stats(subjects_display, csvlist)
-
-    # semesters
-    semesters = get_semesters(mainpage_response.text)
-    flask_session_custom["semesters"] = semesters
 
     return {"status": "ok", "subjects_display": subjects_display, "csvlist": csvlist, "stats": stats}
 
@@ -627,6 +701,7 @@ def api_home():
         "stats": result["stats"],
         "semesters": [{"index": i, "label": label} for i, label in enumerate(flask_session_custom.get("semesters", []))],
         "selectedSemester": flask_session_custom.get("semester", -1),
+        "studentName": flask_session_custom.get("studentName"),
     })
 
 
@@ -723,7 +798,14 @@ def _load_portfolio_data() -> dict:
     if not student_id:
         return {"status": "redirect"}
 
-    response = session.get(f"https://is.psjg.cz/achievement/view/{student_id}", headers=headers)
+    # semesterId here is a best-effort guess at consistency with every other
+    # endpoint in this app (mainpage, grades export, exam overview all take
+    # it) - unverified against a real is.psjg.cz response since this app has
+    # no way to check that from here, but harmless if the achievement page
+    # ignores it.
+    response = session.get(f"https://is.psjg.cz/achievement/view/{student_id}",
+                           params={"semesterId": flask_session_custom.get("semester")},
+                           headers=headers)
 
     if response.status_code != 200:
         return {"status": "error", "code": response.status_code}

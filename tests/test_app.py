@@ -1,5 +1,5 @@
 import pytest
-from app import app, znamka_from_percentage
+from app import app, znamka_from_percentage, build_home_stats
 
 @pytest.fixture()
 def client():
@@ -35,3 +35,24 @@ def test_grade_calculation():
     assert znamka_from_percentage("0%") == 5
     assert znamka_from_percentage("-") == -1
     assert znamka_from_percentage("N") == "N"
+
+
+def test_best_subject_ranks_by_percentage_not_grade():
+    # Matematika and Fyzika both round to grade "1", but Fyzika has the
+    # higher percentage - best subject should follow percentage, not grade.
+    subjects_display = [
+        ["1", "Matematika", "1", "1", "91,00%", "45 / 50"],
+        ["2", "Fyzika", "1", "1", "98,50%", "49 / 50"],
+        ["3", "Dějepis", "3", "3", "65,00%", "33 / 50"],
+    ]
+    stats = build_home_stats(subjects_display, [])
+    assert stats["best_subject"] == "Fyzika"
+
+
+def test_best_subject_falls_back_to_grade_without_percentages():
+    subjects_display = [
+        ["1", "Matematika", "2", "2", "-", "-"],
+        ["2", "Fyzika", "1", "1", "N", "-"],
+    ]
+    stats = build_home_stats(subjects_display, [])
+    assert stats["best_subject"] == "Fyzika"
