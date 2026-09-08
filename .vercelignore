@@ -1,0 +1,10 @@
+tests
+certificates
+.github
+.vscode
+Dockerfile
+example.jsonc
+example-return.json
+image.png
+napad.png
+TODO.md

@@ -1,12 +1,11 @@
-from app import certificates, certificate_chain
+from app import certificates, certificate_chain_path
 import requests
-from os import path
+
 
 def test_certificate_check():
-    certificate = path.join(path.dirname(path.dirname(path.abspath(__file__))), 'certificates', certificate_chain)
     certificates()
     try:
-        response = requests.get("https://is.psjg.cz", verify=certificate)
+        response = requests.get("https://is.psjg.cz", verify=certificate_chain_path)
         assert response.status_code == 200
         assert True, "Certificate is valid and connection is successful."
     except requests.exceptions.SSLError as e:

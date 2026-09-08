@@ -7,8 +7,8 @@
 # Imports
 import traceback
 from flask import Flask, flash, request, redirect, url_for, render_template, jsonify, abort, session as flask_session_custom
-from flask_session import Session
 import os
+import tempfile
 import requests
 from ssl import get_server_certificate
 from urllib.parse import urlparse, parse_qs
@@ -19,7 +19,6 @@ import re
 import pandas as pd
 from dotenv import load_dotenv
 from colorama import init, Fore
-from cachelib import FileSystemCache
 from cert_chain_resolver.api import resolve
 
 # Load environment variables
@@ -28,10 +27,10 @@ load_dotenv(override=True)
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY')
 
-# Server side session to prevent cookies from being too big to handle
+# Signed, client-side cookie session (Flask's default). Kept deliberately small
+# (auth cookies + a few ids) so it fits in a single cookie - this also makes the
+# app work on stateless/serverless hosts (e.g. Vercel) with no server-side store.
 app.config["SESSION_PERMANENT"] = False
-app.config["SESSION_TYPE"] = "cachelib"
-app.config["SESSION_CACHELIB"] = FileSystemCache(cache_dir="flask_session")
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 headers = {
@@ -40,38 +39,50 @@ headers = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
 }
 
-Session(app)
-
 
 # CERTIFICATES
 
-certificate_chain = "psjg_chain.crt"
+# Use a writable temp dir rather than a path inside the repo, since the app's own
+# directory is read-only on serverless hosts (e.g. Vercel only allows writes to /tmp).
+CERTIFICATE_DIR = os.environ.get("CERTIFICATE_DIR") or os.path.join(tempfile.gettempdir(), "openschoolsucks-certificates")
+os.makedirs(CERTIFICATE_DIR, exist_ok=True)
+certificate_chain_path = os.path.join(CERTIFICATE_DIR, "psjg_chain.crt")
 certificate_file = "custom"
 
 
 def certificates() -> None:
     """Generate full certificate chain using cert_chain_resolver because is.psjg.cz sends incomplete
     """
+    half_chain_path = os.path.join(CERTIFICATE_DIR, "psjg_half_chain.crt")
     psjg_certificate = str(get_server_certificate(("is.psjg.cz", 443)))
 
-    with open("certificates/psjg_half_chain.crt", "w") as f:
+    with open(half_chain_path, "w") as f:
         f.write(psjg_certificate)
 
-    with open("certificates/psjg_half_chain.crt", 'rb') as f1:
+    with open(half_chain_path, 'rb') as f1:
         fb = f1.read()
         chain = resolve(fb)
 
-        with open("certificates/psjg_chain.crt", "w", encoding="utf-8") as f2:
+        with open(certificate_chain_path, "w", encoding="utf-8") as f2:
             for cert in chain:
                 f2.write(str(cert.export()))
     print("Obtained certificates successfully!")
 
 
-path = os.path.join(os.path.dirname(__file__), "certificates", "psjg_chain.crt")
-certificates()
-
 if os.environ.get('VERIFY', 'True') == 'True':
-    certificate = os.path.join(os.path.dirname(__file__), 'certificates', certificate_chain)
+    try:
+        certificates()
+        certificate = certificate_chain_path
+    except Exception:
+        # Cold start on a host with restricted/no outbound network access, or is.psjg.cz
+        # unreachable - reuse a chain fetched by an earlier warm invocation if there is one,
+        # otherwise fail loudly rather than silently disabling verification.
+        print(traceback.format_exc())
+        if os.path.exists(certificate_chain_path):
+            print(f"{Fore.YELLOW}Failed to refresh certificate chain, reusing the cached one{Fore.RESET}")
+            certificate = certificate_chain_path
+        else:
+            raise
 else:
     print(f"{Fore.RED}!! SSL Verification disabled !!{Fore.RESET}")
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -423,7 +434,6 @@ def home():
             return redirect(url_for("home"))
 
         # Get subjects from saved cookies
-        subjects = flask_session_custom.get("subjects")
         saved_cookies = flask_session_custom.get('cookies')
 
         if not saved_cookies:
@@ -470,8 +480,6 @@ def home():
                 znamky.append(znamka_from_percentage(row[3]))
             df["Znamka"] = znamky
             csvlist = df.values.tolist()
-
-            flask_session_custom["znamky"] = csvlist
 
             # id, název, známka, finální známka, body, procenta
             subjects_display = []
