@@ -34,9 +34,18 @@ app.secret_key = os.environ.get('SECRET_KEY')
 # single signed client-side cookie, so this has to be a server-side store.
 # NOTE: this means the app needs a persistent/writable filesystem and does NOT work
 # on stateless serverless hosts (e.g. Vercel) - see README for that tradeoff.
+#
+# cache_dir must be a writable absolute path, not a plain relative one: a
+# relative path resolves inside the app's own deployment directory, which is
+# read-only on hosts like Vercel (same reason CERTIFICATE_DIR below uses a
+# tmp dir instead of a repo-relative path). Using the same pattern here means
+# the very first session write - right after a successful is.psjg.cz login -
+# doesn't throw and get swallowed into a generic 500.
+SESSION_DIR = os.environ.get("SESSION_DIR") or os.path.join(tempfile.gettempdir(), "openschoolsucks-flask-session")
+os.makedirs(SESSION_DIR, exist_ok=True)
 app.config["SESSION_PERMANENT"] = False
 app.config["SESSION_TYPE"] = "cachelib"
-app.config["SESSION_CACHELIB"] = FileSystemCache(cache_dir="flask_session")
+app.config["SESSION_CACHELIB"] = FileSystemCache(cache_dir=SESSION_DIR)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 # Cross-origin JS frontend (e.g. the React app in ispsjginjs) needs the session
