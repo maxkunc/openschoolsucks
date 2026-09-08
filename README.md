@@ -24,6 +24,36 @@ Required environment variables:
 - `VERIFY` - optional, defaults to `True`. Set to `False` to skip TLS
   verification against is.psjg.cz (not recommended).
 - `DEBUG` - optional, defaults to `False`. Leave unset/`False` in production.
+- `FRONTEND_ORIGIN` - optional, defaults to `http://localhost:5173,http://127.0.0.1:5173`.
+  Comma-separated list of origins allowed to call the JSON API below with
+  credentials (browsers reject `Access-Control-Allow-Origin: *` together with
+  cookies, so the frontend's real origin(s) must be listed explicitly).
+- `SESSION_COOKIE_SAMESITE` / `SESSION_COOKIE_SECURE` - optional. If the
+  frontend (e.g. the [ispsjginjs](https://github.com/maxkunc/ispsjginjs) React
+  app) is deployed on a *different domain* than this backend, the session
+  cookie needs `SESSION_COOKIE_SAMESITE=None` and `SESSION_COOKIE_SECURE=True`
+  (which requires HTTPS) for the browser to send it back on cross-origin API
+  calls. Same-domain (or same-site, reverse-proxied) deployments can leave
+  both unset.
+
+## JSON API
+
+Alongside the original server-rendered pages, the app exposes a small JSON
+API (same login/scraping logic, same server-side session) for the
+[ispsjginjs](https://github.com/maxkunc/ispsjginjs) React frontend:
+
+- `GET  /api/session` - `{ authenticated }`
+- `POST /api/login` - body `{ username, password }`
+- `POST /api/logout`
+- `GET  /api/home?page=N` - subjects, paginated grades, dashboard stats, semesters
+- `POST /api/semester` - body `{ semester: "<label from /api/home>" }`
+- `GET  /api/subject/<id>` - grades for one subject
+- `GET  /api/portfolio` - portfolio points/place/categories
+- `GET  /api/zkouseni` - placeholder (feature still WIP, see TODO.md)
+
+All routes other than `/api/login` and `/api/session` return
+`401 {"ok": false, "error": "not_authenticated"}` when there's no valid
+session, mirroring the redirect-to-login behavior of the HTML routes.
 
 ## Fonts
 

@@ -8,6 +8,7 @@
 import traceback
 from flask import Flask, flash, request, redirect, url_for, render_template, jsonify, abort, session as flask_session_custom
 from flask_session import Session
+from flask_cors import CORS
 import os
 import tempfile
 import requests
@@ -37,6 +38,18 @@ app.config["SESSION_PERMANENT"] = False
 app.config["SESSION_TYPE"] = "cachelib"
 app.config["SESSION_CACHELIB"] = FileSystemCache(cache_dir="flask_session")
 app.config['TEMPLATES_AUTO_RELOAD'] = True
+
+# Cross-origin JS frontend (e.g. the React app in ispsjginjs) needs the session
+# cookie sent back on every /api/* call, so the cookie itself has to allow that
+# and CORS has to explicitly trust the frontend's origin (credentials + "*" is
+# not allowed by browsers, so origins must be listed).
+app.config['SESSION_COOKIE_SAMESITE'] = os.environ.get('SESSION_COOKIE_SAMESITE', 'Lax')
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'False') == 'True'
+
+FRONTEND_ORIGINS = [origin.strip() for origin in os.environ.get(
+    'FRONTEND_ORIGIN', 'http://localhost:5173,http://127.0.0.1:5173'
+).split(',') if origin.strip()]
+CORS(app, resources={r"/api/*": {"origins": FRONTEND_ORIGINS}}, supports_credentials=True)
 
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -431,6 +444,91 @@ def login():
         return render_template("error.html", message="")
 
 
+def _load_home_data() -> dict:
+    """Shared login-session -> dashboard-data pipeline used by both the HTML
+    /home route and the JSON /api/home route, so the two never drift apart.
+
+    Returns a dict with "status" of "redirect" (no/expired session), "error"
+    (upstream is.psjg.cz failure, carries "code"), or "ok" (carries
+    "subjects_display", "csvlist", "stats").
+    """
+    # Get subjects from saved cookies
+    saved_cookies = flask_session_custom.get('cookies')
+
+    if not saved_cookies:
+        return {"status": "redirect"}
+
+    session = requests.Session()
+    session.verify = certificate
+    session.cookies.update(saved_cookies)
+
+    # Read subjects
+    mainpage_response = session.get("https://is.psjg.cz/",
+                                    params={"semesterId": flask_session_custom.get("semester")},
+                                    headers=headers)
+
+    if mainpage_response.status_code != 200:
+        return {"status": "error", "code": mainpage_response.status_code}
+
+    if 'id="frm-signInForm-name"' in mainpage_response.text:
+        flask_session_custom.pop('cookies', None)  # Delete old cookies
+        return {"status": "redirect"}
+
+    # Get subjects from HTML response and write them to CSV file
+    fieldnames = ["id", "Předmět", "Bodové hodnocení", "Známka", "Výsledná známka"]  # List of column names for CSV file
+    subjects = get_csv_subjects(mainpage_response.text, fieldnames).values.tolist()
+
+    student_info = get_info(mainpage_response.text)
+    flask_session_custom["studentId"] = student_info
+    responseGrid = session.get("https://is.psjg.cz",
+                               params={
+                                   "studentScoreGrid-id": 1,
+                                   "do": "studentScoreGrid-export",
+                                   "semesterId": flask_session_custom.get("semester")
+                               },
+                               headers=headers)
+    if responseGrid.status_code != 200:
+        return {"status": "error", "code": responseGrid.status_code}
+
+    df = csv_to_dataframe(text=responseGrid.text)
+    znamky = []
+    df = df.fillna("")
+    csvlist = df.values.tolist()
+
+    # Add grades to csvlist
+    for row in csvlist:
+        znamky.append(znamka_from_percentage(row[3]))
+    df["Znamka"] = znamky
+    csvlist = df.values.tolist()
+
+    # id, název, známka, finální známka, body, procenta
+    subjects_display = []
+
+    for row in subjects:
+        percentage, points = split_percentage_and_points(row[2])
+        subjects_display.append([row[0], row[1], row[3], row[4], percentage, points])
+
+    stats = build_home_stats(subjects_display, csvlist)
+
+    # semesters
+    semesters = get_semesters(mainpage_response.text)
+    flask_session_custom["semesters"] = semesters
+
+    return {"status": "ok", "subjects_display": subjects_display, "csvlist": csvlist, "stats": stats}
+
+
+def _paginate(rows: list, page_arg: int, per_page: int = 10) -> tuple:
+    """Clamp page_arg into range and slice rows accordingly.
+
+    Returns (page_slice, current_page, total_pages). total_pages is always
+    >= 1 so an empty list still reports "1 / 1" instead of "1 / 0".
+    """
+    total_pages = max(1, (len(rows) + per_page - 1) // per_page)
+    page = min(max(page_arg, 1), total_pages)
+    start = (page - 1) * per_page
+    return rows[start:start + per_page], page, total_pages
+
+
 @app.route('/home', methods=["POST", "GET"])
 def home():
     """Home page. Displays grades and redirects to subjects. Uses data from main endpoint
@@ -440,87 +538,162 @@ def home():
             flask_session_custom["semester"] = get_semester_number(request.form.get("year"))
             return redirect(url_for("home"))
 
-        # Get subjects from saved cookies
-        saved_cookies = flask_session_custom.get('cookies')
+        result = _load_home_data()
 
-        if not saved_cookies:
+        if result["status"] == "redirect":
             return redirect(url_for("login"))
+        if result["status"] == "error":
+            return render_template("error.html", error=f"response code {result['code']}", traceback="")
 
-        session = requests.Session()
-        session.verify = certificate
-        session.cookies.update(saved_cookies)
+        znamky_page, page, total_pages = _paginate(result["csvlist"], request.args.get('page', 1, type=int))
+        subjects_display = result["subjects_display"] or [-1]
+        znamky = znamky_page if result["csvlist"] else [-1]
 
-        # Read subjects
-        mainpage_response = session.get("https://is.psjg.cz/",
-                                        params={"semesterId": flask_session_custom.get("semester")},
-                                        headers=headers)
-
-        # Get subjects from HTML response and write them to CSV file
-        fieldnames = ["id", "Předmět", "Bodové hodnocení", "Známka", "Výsledná známka"]  # List of column names for CSV file
-        subjects = get_csv_subjects(mainpage_response.text, fieldnames).values.tolist()
-
-        if mainpage_response.status_code != 200:
-            return render_template("error.html", error=f"response code {mainpage_response.status_code}", traceback="")
-
-        if 'id="frm-signInForm-name"' in mainpage_response.text:
-            flask_session_custom.pop('cookies', None)  # Delete old cookies
-            return redirect(url_for("login"))
-
-        student_info = get_info(mainpage_response.text)
-        flask_session_custom["studentId"] = student_info
-        responseGrid = session.get("https://is.psjg.cz",
-                                   params={
-                                       "studentScoreGrid-id": 1,
-                                       "do": "studentScoreGrid-export",
-                                       "semesterId": flask_session_custom.get("semester")
-                                   },
-                                   headers=headers)
-        # Results
-        if responseGrid.status_code == 200:
-            df = csv_to_dataframe(text=responseGrid.text)
-            znamky = []
-            df = df.fillna("")
-            csvlist = df.values.tolist()
-
-            # Add grades to csvlist
-            for row in csvlist:
-                znamky.append(znamka_from_percentage(row[3]))
-            df["Znamka"] = znamky
-            csvlist = df.values.tolist()
-
-            # id, název, známka, finální známka, body, procenta
-            subjects_display = []
-
-            for row in subjects:
-                percentage, points = split_percentage_and_points(row[2])
-                subjects_display.append([row[0], row[1], row[3], row[4], percentage, points])
-
-            # Compute quick stats for the dashboard before the -1 sentinels are appended
-            stats = build_home_stats(subjects_display, csvlist)
-
-            # Check for no grades or subjects
-            if len(subjects_display) == 0:
-                subjects_display.append(-1)
-            if len(csvlist) == 0:
-                csvlist.append(-1)
-
-            per_page = 10
-            total_pages = (len(csvlist) + per_page - 1) // per_page
-            page = min(max(request.args.get('page', 1, type=int), 1), total_pages)
-            start = (page - 1) * per_page
-            end = start + per_page
-
-            # semesters
-            semesters = get_semesters(mainpage_response.text)
-            flask_session_custom["semesters"] = semesters
-
-            # Render the template
-            return render_template("home.html", subjects=subjects_display, znamky=csvlist[start:end], current=page, total=total_pages, stats=stats)
-        else:
-            return render_template("error.html", error=f"response code {responseGrid.status_code}", traceback="")
+        # Render the template
+        return render_template("home.html", subjects=subjects_display, znamky=znamky, current=page, total=total_pages, stats=result["stats"])
     except Exception as e:
         print(traceback.format_exc())
         return render_template("error.html", message="")
+
+
+@app.route('/api/session')
+def api_session():
+    """Whether the browser currently has a valid is.psjg.cz session"""
+    return jsonify({"authenticated": bool(flask_session_custom.get('cookies'))})
+
+
+@app.route('/api/login', methods=["POST"])
+def api_login():
+    """JSON login endpoint for the React frontend. Sets the same server-side
+    session cookie as the HTML login form does.
+    """
+    payload = request.get_json(silent=True) or request.form
+    username = payload.get("username")
+    password = payload.get("password")
+
+    if not username or not password:
+        return jsonify({"ok": False, "error": "missing_credentials"}), 400
+
+    try:
+        session = requests.Session()
+        session.verify = certificate
+        response = session.post("https://is.psjg.cz/sign/in", data={
+            "name": username,
+            "password": password,
+            "signIn": "Přihlásit se",
+            "_do": "signInForm-submit"}, headers=headers)
+
+        if response.status_code != 200:
+            return jsonify({"ok": False, "error": "upstream_error", "code": response.status_code}), 502
+
+        if "Neplatné přihlašovací jméno nebo heslo" in response.text:
+            return jsonify({"ok": False, "error": "invalid_credentials"}), 401
+
+        flask_session_custom["cookies"] = session.cookies.get_dict()
+        return jsonify({"ok": True})
+
+    except requests.exceptions.SSLError:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "ssl_error"}), 502
+    except Exception:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "unknown_error"}), 500
+
+
+@app.route('/api/logout', methods=["POST"])
+def api_logout():
+    flask_session_custom.clear()
+    return jsonify({"ok": True})
+
+
+@app.route('/api/semester', methods=["POST"])
+def api_semester():
+    """Switch the active semester (mirrors the HTML sidenav <select>)."""
+    payload = request.get_json(silent=True) or request.form
+    label = payload.get("semester")
+    if label is None:
+        return jsonify({"ok": False, "error": "missing_semester"}), 400
+    flask_session_custom["semester"] = get_semester_number(label)
+    return jsonify({"ok": True, "selectedSemester": flask_session_custom["semester"]})
+
+
+@app.route('/api/home')
+def api_home():
+    """JSON version of /home for the React dashboard."""
+    if not flask_session_custom.get('cookies'):
+        return jsonify({"ok": False, "error": "not_authenticated"}), 401
+
+    try:
+        result = _load_home_data()
+    except Exception:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "unknown_error"}), 500
+
+    if result["status"] == "redirect":
+        return jsonify({"ok": False, "error": "not_authenticated"}), 401
+    if result["status"] == "error":
+        return jsonify({"ok": False, "error": "upstream_error", "code": result["code"]}), 502
+
+    grades_page, page, total_pages = _paginate(result["csvlist"], request.args.get('page', 1, type=int))
+
+    return jsonify({
+        "ok": True,
+        "subjects": [
+            {"id": r[0], "name": r[1], "knownGrade": r[2], "finalGrade": r[3], "percentage": r[4], "points": r[5]}
+            for r in result["subjects_display"]
+        ],
+        "grades": [
+            {"date": r[0], "name": r[1], "subject": r[2], "percentage": r[3], "points": r[4], "grade": r[6] if len(r) > 6 else None}
+            for r in grades_page
+        ],
+        "page": {"current": page, "total": total_pages},
+        "stats": result["stats"],
+        "semesters": [{"index": i, "label": label} for i, label in enumerate(flask_session_custom.get("semesters", []))],
+        "selectedSemester": flask_session_custom.get("semester", -1),
+    })
+
+
+def _load_subject_data(subject_id) -> dict:
+    """Shared pipeline for /subject/<id> and /api/subject/<id>."""
+    saved_cookies = flask_session_custom.get('cookies')
+    student_id = flask_session_custom.get('studentId')
+
+    if not saved_cookies or not student_id:
+        return {"status": "redirect"}
+
+    session = requests.Session()
+    session.verify = certificate
+    session.cookies.update(saved_cookies)
+
+    response = session.get("https://is.psjg.cz/student/student-exam-overview",
+                           params={
+                               "studentExamOverview-examGrid-id": "1",
+                               "studentId": student_id,
+                               "subjectId": subject_id,
+                               "do": "studentExamOverview-examGrid-export",
+                               "semesterId": flask_session_custom.get("semester")
+                           }, headers=headers,)
+
+    if response.status_code != 200:
+        return {"status": "error", "code": response.status_code}
+
+    if 'id="frm-signInForm-name"' in response.text:
+        flask_session_custom.pop('cookies', None)  # Delete old cookies
+        return {"status": "redirect"}
+
+    df = csv_to_dataframe(text=response.text)
+
+    znamky = []
+    csvlist = df.values.tolist()
+
+    # Add znamka to csvlist
+    for x, row in enumerate(csvlist):
+        znamky.append(znamka_from_percentage(row[5]))
+    df["Znamka"] = znamky
+    df = df.fillna("")
+    csvlist = df.values.tolist()
+
+    return {"status": "ok", "csvlist": csvlist}
 
 
 @app.route('/subject/<subject_id>')
@@ -531,48 +704,14 @@ def subject(subject_id: int):
         subject_id (int): id of the subject to display
     """
     try:
-        saved_cookies = flask_session_custom.get('cookies')
-        student_id = flask_session_custom.get('studentId')
+        result = _load_subject_data(subject_id)
 
-        if not saved_cookies or not student_id:
+        if result["status"] == "redirect":
             return redirect(url_for("login"))
+        if result["status"] == "error":
+            return render_template("error.html", error=f"Http code {result['code']}", traceback="")
 
-        session = requests.Session()
-        session.verify = certificate
-        session.cookies.update(saved_cookies)
-
-        response = session.get("https://is.psjg.cz/student/student-exam-overview",
-                               params={
-                                   "studentExamOverview-examGrid-id": "1",
-                                   "studentId": student_id,
-                                   "subjectId": subject_id,
-                                   "do": "studentExamOverview-examGrid-export",
-                                   "semesterId": flask_session_custom.get("semester")
-                               }, headers=headers,)
-
-        if response.status_code == 200:
-
-            # Check for old cookies
-            if 'id="frm-signInForm-name"' in response.text:
-                flask_session_custom.pop('cookies', None)  # Delete old cookies
-                return redirect(url_for("login"))
-
-            # Save response to CSV
-            df = csv_to_dataframe(text=response.text)
-
-            znamky = []
-            csvlist = df.values.tolist()
-
-            # Add znamka to csvlist
-            for x, row in enumerate(csvlist):
-                znamky.append(znamka_from_percentage(row[5]))
-            df["Znamka"] = znamky
-            df = df.fillna("")
-            csvlist = df.values.tolist()
-
-            return render_template("znamka.html", znamky=csvlist)
-        else:
-            return render_template("error.html", error=f"Http code {response.status_code}", traceback="")
+        return render_template("znamka.html", znamky=result["csvlist"])
 
     except requests.exceptions.SSLError as e:
         print(traceback.format_exc())
@@ -581,6 +720,59 @@ def subject(subject_id: int):
     except Exception as e:
         print(traceback.format_exc())
         return render_template("error.html", message="")
+
+
+@app.route('/api/subject/<subject_id>')
+def api_subject(subject_id: int):
+    """JSON version of /subject/<id> for the React dashboard."""
+    if not flask_session_custom.get('cookies') or not flask_session_custom.get('studentId'):
+        return jsonify({"ok": False, "error": "not_authenticated"}), 401
+
+    try:
+        result = _load_subject_data(subject_id)
+    except requests.exceptions.SSLError:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "ssl_error"}), 502
+    except Exception:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "unknown_error"}), 500
+
+    if result["status"] == "redirect":
+        return jsonify({"ok": False, "error": "not_authenticated"}), 401
+    if result["status"] == "error":
+        return jsonify({"ok": False, "error": "upstream_error", "code": result["code"]}), 502
+
+    return jsonify({
+        "ok": True,
+        "grades": [
+            {"date": r[0], "name": r[1], "points": r[4], "percentage": r[5], "description": r[6], "grade": r[7] if len(r) > 7 else None}
+            for r in result["csvlist"]
+        ],
+    })
+
+
+def _load_portfolio_data() -> dict:
+    """Shared pipeline for /portfolio and /api/portfolio."""
+    saved_cookies = flask_session_custom.get('cookies')
+    student_id = flask_session_custom.get('studentId')
+
+    if not saved_cookies or not student_id:
+        return {"status": "redirect"}
+
+    session = requests.Session()
+    session.verify = certificate
+    session.cookies.update(saved_cookies)
+
+    response = session.get(f"https://is.psjg.cz/achievement/view/{student_id}", headers=headers)
+
+    if response.status_code != 200:
+        return {"status": "error", "code": response.status_code}
+
+    if 'id="frm-signInForm-name"' in response.text:
+        flask_session_custom.pop('cookies', None)  # Delete old cookies
+        return {"status": "redirect"}
+
+    return {"status": "ok", "portfolio": get_portfolio(text=response.text)}
 
 
 @app.route('/portfolio')
@@ -588,25 +780,14 @@ def portfolio():
     """Student prtfolio endpoint
     """
     try:
-        saved_cookies = flask_session_custom.get('cookies')
-        student_id = flask_session_custom.get('studentId')
+        result = _load_portfolio_data()
 
-        if not saved_cookies or not student_id:
+        if result["status"] == "redirect":
             return redirect(url_for("login"))
-        session = requests.Session()
-        session.verify = certificate
-        session.cookies.update(saved_cookies)
+        if result["status"] == "error":
+            return render_template("error.html", error=f"response code {result['code']}", traceback="")
 
-        response = session.get(f"https://is.psjg.cz/achievement/view/{student_id}", headers=headers)
-
-        if response.status_code == 200:
-            # Check for old cookies
-            if 'id="frm-signInForm-name"' in response.text:
-                flask_session_custom.pop('cookies', None)  # Delete old cookies
-                return redirect(url_for("login"))
-
-            # Render the template
-            return render_template("portfolio.html", portfolio=get_portfolio(text=response.text))
+        return render_template("portfolio.html", portfolio=result["portfolio"])
 
     except requests.exceptions.SSLError as e:
         print(traceback.format_exc())
@@ -615,6 +796,29 @@ def portfolio():
     except Exception as e:
         print(traceback.format_exc())
         return render_template("error.html", message="")
+
+
+@app.route('/api/portfolio')
+def api_portfolio():
+    """JSON version of /portfolio for the React dashboard."""
+    if not flask_session_custom.get('cookies') or not flask_session_custom.get('studentId'):
+        return jsonify({"ok": False, "error": "not_authenticated"}), 401
+
+    try:
+        result = _load_portfolio_data()
+    except requests.exceptions.SSLError:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "ssl_error"}), 502
+    except Exception:
+        print(traceback.format_exc())
+        return jsonify({"ok": False, "error": "unknown_error"}), 500
+
+    if result["status"] == "redirect":
+        return jsonify({"ok": False, "error": "not_authenticated"}), 401
+    if result["status"] == "error":
+        return jsonify({"ok": False, "error": "upstream_error", "code": result["code"]}), 502
+
+    return jsonify({"ok": True, **result["portfolio"]})
 
 # Zkoušení
 
@@ -634,6 +838,16 @@ def zkouseni():
 
     # Render the template
     return render_template("zkouseni.html")
+
+
+@app.route('/api/zkouseni')
+def api_zkouseni():
+    """Placeholder JSON endpoint - the zkoušení feature itself is still WIP
+    upstream (see TODO.md), this just mirrors the auth check of /zkouseni.
+    """
+    if not flask_session_custom.get('studentId'):
+        return jsonify({"ok": False, "error": "not_authenticated"}), 401
+    return jsonify({"ok": True, "implemented": False})
 
 
 @app.route("/logout")
