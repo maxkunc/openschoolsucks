@@ -5,6 +5,7 @@
 ###############################
 
 # Imports
+import concurrent.futures
 import traceback
 from flask import Flask, request, jsonify, abort, send_from_directory, session as flask_session_custom
 from flask_session import Session
@@ -61,6 +62,12 @@ headers = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
 }
 
+# (connect timeout, read timeout) in seconds, applied to every request to
+# is.psjg.cz. requests has no timeout by default, so a slow/hung upstream
+# connection used to be able to block a request indefinitely instead of
+# failing fast with a clear error the frontend can show.
+REQUEST_TIMEOUT = (5, 20)
+
 Session(app)
 
 
@@ -93,20 +100,38 @@ def certificates() -> None:
     print("Obtained certificates successfully!")
 
 
+def _resolve_certificate_chain(timeout_seconds: int = 15) -> None:
+    """Run certificates() under a hard timeout.
+
+    Neither get_server_certificate() nor cert_chain_resolver's own network
+    calls take a timeout, so without this a slow/hanging is.psjg.cz can
+    block app boot indefinitely instead of just failing this one step.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(certificates).result(timeout=timeout_seconds)
+
+
 if os.environ.get('VERIFY', 'True') == 'True':
     try:
-        certificates()
+        _resolve_certificate_chain()
         certificate = certificate_chain_path
     except Exception:
-        # Cold start on a host with restricted/no outbound network access, or is.psjg.cz
-        # unreachable - reuse a chain fetched by an earlier warm invocation if there is one,
-        # otherwise fail loudly rather than silently disabling verification.
+        # Cold start on a host with restricted/no outbound network access, is.psjg.cz
+        # unreachable, or the chain fetch just took too long - reuse a chain fetched
+        # by an earlier warm invocation if there is one. This must never crash app
+        # boot: CERTIFICATE_DIR lives on an ephemeral tmp dir on hosts like Render,
+        # so every cold start (including every restart after a crash) starts with no
+        # cache and has to refetch the chain from scratch - a single transient
+        # failure here used to crash-loop the whole process forever.
         print(traceback.format_exc())
         if os.path.exists(certificate_chain_path):
             print(f"{Fore.YELLOW}Failed to refresh certificate chain, reusing the cached one{Fore.RESET}")
             certificate = certificate_chain_path
         else:
-            raise
+            print(f"{Fore.RED}Failed to obtain a certificate chain and no cached one exists - "
+                  f"booting with SSL verification disabled instead of crash-looping{Fore.RESET}")
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            certificate = False
 else:
     print(f"{Fore.RED}!! SSL Verification disabled !!{Fore.RESET}")
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -519,7 +544,7 @@ def _ensure_student_id(session: requests.Session) -> int | None:
 
     mainpage_response = session.get("https://is.psjg.cz/",
                                     params={"semesterId": flask_session_custom.get("semester")},
-                                    headers=headers)
+                                    headers=headers, timeout=REQUEST_TIMEOUT)
     if mainpage_response.status_code != 200:
         return None
     if 'id="frm-signInForm-name"' in mainpage_response.text:
@@ -552,7 +577,7 @@ def _load_home_data() -> dict:
     # Read subjects
     mainpage_response = session.get("https://is.psjg.cz/",
                                     params={"semesterId": flask_session_custom.get("semester")},
-                                    headers=headers)
+                                    headers=headers, timeout=REQUEST_TIMEOUT)
 
     if mainpage_response.status_code != 200:
         return {"status": "error", "code": mainpage_response.status_code}
@@ -587,7 +612,7 @@ def _load_home_data() -> dict:
                                    "do": "studentScoreGrid-export",
                                    "semesterId": flask_session_custom.get("semester")
                                },
-                               headers=headers)
+                               headers=headers, timeout=REQUEST_TIMEOUT)
     if responseGrid.status_code != 200:
         return {"status": "error", "code": responseGrid.status_code}
 
@@ -651,7 +676,7 @@ def api_login():
             "name": username,
             "password": password,
             "signIn": "Přihlásit se",
-            "_do": "signInForm-submit"}, headers=headers)
+            "_do": "signInForm-submit"}, headers=headers, timeout=REQUEST_TIMEOUT)
 
         if response.status_code != 200:
             return jsonify({"ok": False, "error": "upstream_error", "code": response.status_code}), 502
@@ -665,10 +690,11 @@ def api_login():
     except requests.exceptions.SSLError:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "ssl_error"}), 502
-    except requests.exceptions.ConnectionError:
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
         # Backend couldn't reach is.psjg.cz at all (DNS, firewall, proxy, host
-        # network policy, ...) - distinct from a bug in this app, and from
-        # SSLError above (a ConnectionError subclass, so it must come after it).
+        # network policy, ...) or it didn't respond within REQUEST_TIMEOUT -
+        # distinct from a bug in this app, and from SSLError above (a
+        # ConnectionError subclass, so it must come after it).
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "connection_error"}), 502
     except Exception:
@@ -704,7 +730,7 @@ def api_home():
     except requests.exceptions.SSLError:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "ssl_error"}), 502
-    except requests.exceptions.ConnectionError:
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "connection_error"}), 502
     except Exception:
@@ -758,7 +784,7 @@ def _load_subject_data(subject_id) -> dict:
                                "subjectId": subject_id,
                                "do": "studentExamOverview-examGrid-export",
                                "semesterId": flask_session_custom.get("semester")
-                           }, headers=headers,)
+                           }, headers=headers, timeout=REQUEST_TIMEOUT)
 
     if response.status_code != 200:
         return {"status": "error", "code": response.status_code}
@@ -793,7 +819,7 @@ def api_subject(subject_id: int):
     except requests.exceptions.SSLError:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "ssl_error"}), 502
-    except requests.exceptions.ConnectionError:
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "connection_error"}), 502
     except Exception:
@@ -836,7 +862,7 @@ def _load_portfolio_data() -> dict:
     # ignores it.
     response = session.get(f"https://is.psjg.cz/achievement/view/{student_id}",
                            params={"semesterId": flask_session_custom.get("semester")},
-                           headers=headers)
+                           headers=headers, timeout=REQUEST_TIMEOUT)
 
     if response.status_code != 200:
         return {"status": "error", "code": response.status_code}
@@ -859,7 +885,7 @@ def api_portfolio():
     except requests.exceptions.SSLError:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "ssl_error"}), 502
-    except requests.exceptions.ConnectionError:
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "connection_error"}), 502
     except Exception:
@@ -889,7 +915,7 @@ def _load_zkouseni_data() -> dict:
 
     response = session.get("https://is.psjg.cz/exam/student-view",
                            params={"semesterId": flask_session_custom.get("semester")},
-                           headers=headers)
+                           headers=headers, timeout=REQUEST_TIMEOUT)
 
     if response.status_code != 200:
         return {"status": "error", "code": response.status_code}
@@ -912,7 +938,7 @@ def api_zkouseni():
     except requests.exceptions.SSLError:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "ssl_error"}), 502
-    except requests.exceptions.ConnectionError:
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "connection_error"}), 502
     except Exception:
