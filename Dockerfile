@@ -17,7 +17,7 @@ ARG FRONTEND_REF=main
 # of this file) - is what invalidates the git-clone layer when it needs to.
 # Update this to ispsjginjs's new HEAD commit every time it changes:
 #   git -C ../ispsjginjs rev-parse HEAD
-ARG FRONTEND_COMMIT=7e0de64a6e34764655210c3751431bfdb77a8201
+ARG FRONTEND_COMMIT=07e12de2ec6d05a76b856ac5972c1b9cbfcd547c
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git ca-certificates && \
