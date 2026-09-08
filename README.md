@@ -37,12 +37,13 @@ Without the blueprint, the same works as **New > Web Service**, environment
 "Docker" (auto-detected from `Dockerfile`).
 
 **Pushed a change to `ispsjginjs` and the deployed UI didn't update?** The
-`Dockerfile`'s `frontend` stage clones `ispsjginjs` at a pinned commit
-(`FRONTEND_COMMIT` build arg) rather than always "whatever `main` currently
-is" - a plain `git clone` has identical instruction text on every build, so
-without a pin Docker (and Render's build cache) has no way to know the
-remote changed and just silently keeps reusing whatever it cloned the very
-first time that layer ever built, no matter how many new commits land on
+`Dockerfile`'s `frontend` stage downloads `ispsjginjs` as a tarball
+(`https://github.com/<owner>/<repo>/archive/<commit>.tar.gz`) at a pinned
+commit (`FRONTEND_COMMIT` build arg) rather than always "whatever `main`
+currently is" - a fetch with identical instruction text on every build
+gives Docker (and Render's build cache) no way to know the remote changed,
+so it just silently keeps reusing whatever it fetched the very first time
+that layer ever built, no matter how many new commits land on
 `ispsjginjs`. So **after every push to `ispsjginjs`, bump `FRONTEND_COMMIT`
 here to its new HEAD and push that too**:
 
@@ -50,9 +51,16 @@ here to its new HEAD and push that too**:
 git -C ../ispsjginjs rev-parse HEAD   # copy this into Dockerfile's FRONTEND_COMMIT
 ```
 
-Building a different branch/fork entirely? `FRONTEND_REPO`, `FRONTEND_REF`,
-and `FRONTEND_COMMIT` are all build args (defaults: this account's
-`ispsjginjs`, branch `main`, pinned to its current HEAD) - pass them via
+(A plain `git clone` was tried first here instead of the tarball download,
+but started failing on Render's build network with
+`fatal: could not read Username for 'https://github.com'` even against
+this public repo - most likely GitHub rate-limiting/challenging anonymous
+git-protocol operations from cloud build IP ranges. The tarball download
+is a plain HTTPS `curl`/`tar.gz`, no git-smart-http handshake to fail.)
+
+Building a different branch/fork entirely? `FRONTEND_OWNER`,
+`FRONTEND_REPO_NAME`, and `FRONTEND_COMMIT` are all build args (defaults:
+this account's `ispsjginjs`, pinned to its current HEAD) - pass them via
 `docker build --build-arg ...` if building elsewhere, or your host's Docker
 build-args setting if it has one.
 

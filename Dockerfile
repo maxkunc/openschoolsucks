@@ -4,26 +4,33 @@ FROM node:20-slim AS frontend
 
 WORKDIR /frontend
 
-ARG FRONTEND_REPO=https://github.com/maxkunc/ispsjginjs.git
-ARG FRONTEND_REF=main
+ARG FRONTEND_OWNER=maxkunc
+ARG FRONTEND_REPO_NAME=ispsjginjs
 # Pinned to a specific commit of ispsjginjs. This is what actually makes
-# rebuilds happen: a plain `git clone` has identical instruction text on
-# every build, so Docker has no way to know the remote changed and just
-# reuses its cached layer forever (an ADD-from-URL trick to get Docker to
-# re-check was tried here and didn't reliably force a fresh check on
-# Render's build system either). Bumping this value's TEXT, which lives
-# in this Dockerfile - i.e. in this repo, whose own content changes are
-# already known to correctly bust cache below (see the COPY at the bottom
-# of this file) - is what invalidates the git-clone layer when it needs to.
+# rebuilds happen: a fetch with identical instruction text on every build
+# gives Docker no signal that the remote changed, so it just reuses its
+# cached layer forever. Bumping this value's TEXT, which lives in this
+# Dockerfile - i.e. in this repo, whose own content changes are already
+# known to correctly bust cache below (see the COPY at the bottom of this
+# file) - is what invalidates this layer when it needs to.
 # Update this to ispsjginjs's new HEAD commit every time it changes:
 #   git -C ../ispsjginjs rev-parse HEAD
 ARG FRONTEND_COMMIT=e7011805304e2996990be0030f34118061a78e59
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git ca-certificates && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
-RUN git clone --branch ${FRONTEND_REF} ${FRONTEND_REPO} . && git checkout ${FRONTEND_COMMIT}
+# A plain tarball download instead of `git clone`: codeload.github.com
+# serves it over ordinary HTTPS, so there's no git-smart-http protocol
+# handshake to fail - `git clone` here started hitting
+# "fatal: could not read Username for 'https://github.com'" on Render's
+# build network even against this public repo (most likely GitHub
+# rate-limiting/challenging anonymous git operations from cloud build
+# IP ranges, unrelated to repo visibility). This sidesteps that failure
+# mode entirely.
+RUN curl -fsSL "https://github.com/${FRONTEND_OWNER}/${FRONTEND_REPO_NAME}/archive/${FRONTEND_COMMIT}.tar.gz" \
+    | tar -xz --strip-components=1
 RUN npm ci
 RUN npm run build
 
