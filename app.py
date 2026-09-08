@@ -407,6 +407,35 @@ def split_percentage_and_points(text: str) -> tuple[int, int]:
     return (percentage, points)
 
 
+def _ensure_student_id(session: requests.Session) -> int | None:
+    """Get the cached student id, fetching it from the mainpage if this is
+    the first request of the browser session to need it.
+
+    /api/home always populates flask_session_custom["studentId"] as a side
+    effect, but /api/portfolio (and, in principle, /api/subject/<id>) can
+    fire before the frontend's /api/home call has finished - there's no
+    ordering between the two on the client. Without this, that race 401s
+    portfolio/subject requests as "not_authenticated" even though the user
+    is logged in; the session just hasn't seen the mainpage yet.
+    """
+    student_id = flask_session_custom.get('studentId')
+    if student_id:
+        return student_id
+
+    mainpage_response = session.get("https://is.psjg.cz/",
+                                    params={"semesterId": flask_session_custom.get("semester")},
+                                    headers=headers)
+    if mainpage_response.status_code != 200:
+        return None
+    if 'id="frm-signInForm-name"' in mainpage_response.text:
+        flask_session_custom.pop('cookies', None)  # Delete old cookies
+        return None
+
+    student_id = get_info(mainpage_response.text)
+    flask_session_custom["studentId"] = student_id
+    return student_id
+
+
 def _load_home_data() -> dict:
     """Shared login-session -> dashboard-data pipeline used by both the HTML
     /home route and the JSON /api/home route, so the two never drift apart.
@@ -604,14 +633,17 @@ def api_home():
 def _load_subject_data(subject_id) -> dict:
     """Shared pipeline for /subject/<id> and /api/subject/<id>."""
     saved_cookies = flask_session_custom.get('cookies')
-    student_id = flask_session_custom.get('studentId')
 
-    if not saved_cookies or not student_id:
+    if not saved_cookies:
         return {"status": "redirect"}
 
     session = requests.Session()
     session.verify = certificate
     session.cookies.update(saved_cookies)
+
+    student_id = _ensure_student_id(session)
+    if not student_id:
+        return {"status": "redirect"}
 
     response = session.get("https://is.psjg.cz/student/student-exam-overview",
                            params={
@@ -647,7 +679,7 @@ def _load_subject_data(subject_id) -> dict:
 @app.route('/api/subject/<subject_id>')
 def api_subject(subject_id: int):
     """JSON version of /subject/<id> for the React dashboard."""
-    if not flask_session_custom.get('cookies') or not flask_session_custom.get('studentId'):
+    if not flask_session_custom.get('cookies'):
         return jsonify({"ok": False, "error": "not_authenticated"}), 401
 
     try:
@@ -679,14 +711,17 @@ def api_subject(subject_id: int):
 def _load_portfolio_data() -> dict:
     """Shared pipeline for /portfolio and /api/portfolio."""
     saved_cookies = flask_session_custom.get('cookies')
-    student_id = flask_session_custom.get('studentId')
 
-    if not saved_cookies or not student_id:
+    if not saved_cookies:
         return {"status": "redirect"}
 
     session = requests.Session()
     session.verify = certificate
     session.cookies.update(saved_cookies)
+
+    student_id = _ensure_student_id(session)
+    if not student_id:
+        return {"status": "redirect"}
 
     response = session.get(f"https://is.psjg.cz/achievement/view/{student_id}", headers=headers)
 
@@ -703,7 +738,7 @@ def _load_portfolio_data() -> dict:
 @app.route('/api/portfolio')
 def api_portfolio():
     """JSON version of /portfolio for the React dashboard."""
-    if not flask_session_custom.get('cookies') or not flask_session_custom.get('studentId'):
+    if not flask_session_custom.get('cookies'):
         return jsonify({"ok": False, "error": "not_authenticated"}), 401
 
     try:
