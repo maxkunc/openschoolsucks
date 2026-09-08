@@ -6,22 +6,24 @@ WORKDIR /frontend
 
 ARG FRONTEND_REPO=https://github.com/maxkunc/ispsjginjs.git
 ARG FRONTEND_REF=main
-# Must name the same repo/ref as FRONTEND_REPO/FRONTEND_REF above if you
-# override those - see the ADD instruction below for why this exists.
-ARG FRONTEND_COMMIT_API=https://api.github.com/repos/maxkunc/ispsjginjs/commits/main
+# Pinned to a specific commit of ispsjginjs. This is what actually makes
+# rebuilds happen: a plain `git clone` has identical instruction text on
+# every build, so Docker has no way to know the remote changed and just
+# reuses its cached layer forever (an ADD-from-URL trick to get Docker to
+# re-check was tried here and didn't reliably force a fresh check on
+# Render's build system either). Bumping this value's TEXT, which lives
+# in this Dockerfile - i.e. in this repo, whose own content changes are
+# already known to correctly bust cache below (see the COPY at the bottom
+# of this file) - is what invalidates the git-clone layer when it needs to.
+# Update this to ispsjginjs's new HEAD commit every time it changes:
+#   git -C ../ispsjginjs rev-parse HEAD
+ARG FRONTEND_COMMIT=01997f601a25de0a2f7c086f66e66deed9597c81
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Unlike RUN, ADD re-checks its URL's content on every build and invalidates
-# the cache from here down when it changed. `git clone` below has identical
-# instruction text on every build, so without this Docker would silently
-# keep reusing whatever commit got cloned the very first time this stage
-# ever ran - new pushes to ispsjginjs would never reach a deployed image.
-ADD ${FRONTEND_COMMIT_API} /tmp/frontend-head.json
-
-RUN git clone --depth 1 --branch ${FRONTEND_REF} ${FRONTEND_REPO} .
+RUN git clone --branch ${FRONTEND_REF} ${FRONTEND_REPO} . && git checkout ${FRONTEND_COMMIT}
 RUN npm ci
 RUN npm run build
 
