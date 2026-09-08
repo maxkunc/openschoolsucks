@@ -6,9 +6,8 @@
 
 # Imports
 import traceback
-from flask import Flask, flash, request, redirect, url_for, render_template, jsonify, abort, session as flask_session_custom
+from flask import Flask, request, jsonify, abort, send_from_directory, session as flask_session_custom
 from flask_session import Session
-from flask_cors import CORS
 import os
 import tempfile
 import requests
@@ -48,17 +47,13 @@ app.config["SESSION_TYPE"] = "cachelib"
 app.config["SESSION_CACHELIB"] = FileSystemCache(cache_dir=SESSION_DIR)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
-# Cross-origin JS frontend (e.g. the React app in ispsjginjs) needs the session
-# cookie sent back on every /api/* call, so the cookie itself has to allow that
-# and CORS has to explicitly trust the frontend's origin (credentials + "*" is
-# not allowed by browsers, so origins must be listed).
+# The React app is built into FRONTEND_DIST and served by this same Flask
+# process (see serve_frontend() at the bottom), so API calls from it are
+# same-origin - no CORS, no separate FRONTEND_ORIGIN, no VITE_API_URL needed.
+# SESSION_COOKIE_SECURE still matters even same-origin: turn it on whenever
+# this is served over HTTPS (the norm in production).
 app.config['SESSION_COOKIE_SAMESITE'] = os.environ.get('SESSION_COOKIE_SAMESITE', 'Lax')
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'False') == 'True'
-
-FRONTEND_ORIGINS = [origin.strip() for origin in os.environ.get(
-    'FRONTEND_ORIGIN', 'http://localhost:5173,http://127.0.0.1:5173'
-).split(',') if origin.strip()]
-CORS(app, resources={r"/api/*": {"origins": FRONTEND_ORIGINS}}, supports_credentials=True)
 
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -412,51 +407,6 @@ def split_percentage_and_points(text: str) -> tuple[int, int]:
     return (percentage, points)
 
 
-@app.route('/', methods=["GET", "POST"])
-def login():
-    """Main endpoint. Handles login and some basic info
-    """
-    try:
-        session = requests.Session()
-        session.verify = certificate
-
-        if request.method == "GET":
-            return render_template("index.html")
-
-        if request.method == "POST":
-            # Get form data
-            username = request.form.get("username")
-            password = request.form.get("password")
-            response = session.post("https://is.psjg.cz/sign/in", data={
-                "name": username,
-                "password": password,
-                "signIn": "Přihlásit se",
-                "_do": "signInForm-submit"}, headers=headers)
-
-            if response.status_code == 200:
-                flask_session_custom["cookies"] = session.cookies.get_dict()
-
-                if "Neplatné přihlašovací jméno nebo heslo" in response.text:
-                    return render_template("index.html", error="Neplatné přihlašovací jméno nebo heslo")
-
-                return redirect(url_for("home"))
-            else:
-                return render_template("error.html", error=f"response code {response.status_code}", traceback="")
-
-    # Error handling
-    except requests.exceptions.SSLError as e:
-        print(traceback.format_exc())
-        return render_template("error.html", message=f"Zkuste obnovit stránku. Použitý certifikát: {certificate_file}" if True else "Nepodařilo se najít funkční certifikát.")
-
-    except requests.exceptions.ConnectionError as e:
-        print(traceback.format_exc())
-        return render_template("error.html", message="Nelze se připojit k is.psjg.cz. Zkontroluj síťové připojení serveru (firewall, proxy) - viz server log pro detail.")
-
-    except Exception as e:
-        print(traceback.format_exc())
-        return render_template("error.html", message="")
-
-
 def _load_home_data() -> dict:
     """Shared login-session -> dashboard-data pipeline used by both the HTML
     /home route and the JSON /api/home route, so the two never drift apart.
@@ -540,39 +490,6 @@ def _paginate(rows: list, page_arg: int, per_page: int = 10) -> tuple:
     page = min(max(page_arg, 1), total_pages)
     start = (page - 1) * per_page
     return rows[start:start + per_page], page, total_pages
-
-
-@app.route('/home', methods=["POST", "GET"])
-def home():
-    """Home page. Displays grades and redirects to subjects. Uses data from main endpoint
-    """
-    try:
-        if request.method == "POST":
-            flask_session_custom["semester"] = get_semester_number(request.form.get("year"))
-            return redirect(url_for("home"))
-
-        result = _load_home_data()
-
-        if result["status"] == "redirect":
-            return redirect(url_for("login"))
-        if result["status"] == "error":
-            return render_template("error.html", error=f"response code {result['code']}", traceback="")
-
-        znamky_page, page, total_pages = _paginate(result["csvlist"], request.args.get('page', 1, type=int))
-        subjects_display = result["subjects_display"] or [-1]
-        znamky = znamky_page if result["csvlist"] else [-1]
-
-        # Render the template
-        return render_template("home.html", subjects=subjects_display, znamky=znamky, current=page, total=total_pages, stats=result["stats"])
-    except requests.exceptions.SSLError as e:
-        print(traceback.format_exc())
-        return render_template("error.html", message=f"Zkuste obnovit stránku. Použitý certifikát: {certificate_file}" if True else "Nepodařilo se najít funkční certifikát.")
-    except requests.exceptions.ConnectionError as e:
-        print(traceback.format_exc())
-        return render_template("error.html", message="Nelze se připojit k is.psjg.cz. Zkontroluj síťové připojení serveru (firewall, proxy) - viz server log pro detail.")
-    except Exception as e:
-        print(traceback.format_exc())
-        return render_template("error.html", message="")
 
 
 @app.route('/api/session')
@@ -727,36 +644,6 @@ def _load_subject_data(subject_id) -> dict:
     return {"status": "ok", "csvlist": csvlist}
 
 
-@app.route('/subject/<subject_id>')
-def subject(subject_id: int):
-    """Get grades from specific subject
-
-    Args:
-        subject_id (int): id of the subject to display
-    """
-    try:
-        result = _load_subject_data(subject_id)
-
-        if result["status"] == "redirect":
-            return redirect(url_for("login"))
-        if result["status"] == "error":
-            return render_template("error.html", error=f"Http code {result['code']}", traceback="")
-
-        return render_template("znamka.html", znamky=result["csvlist"])
-
-    except requests.exceptions.SSLError as e:
-        print(traceback.format_exc())
-        return render_template("error.html", message=f"Zkuste obnovit stránku. Použitý certifikát: {certificate_file}" if True else "Nepodařilo se najít funkční certifikát.")
-
-    except requests.exceptions.ConnectionError as e:
-        print(traceback.format_exc())
-        return render_template("error.html", message="Nelze se připojit k is.psjg.cz. Zkontroluj síťové připojení serveru (firewall, proxy) - viz server log pro detail.")
-
-    except Exception as e:
-        print(traceback.format_exc())
-        return render_template("error.html", message="")
-
-
 @app.route('/api/subject/<subject_id>')
 def api_subject(subject_id: int):
     """JSON version of /subject/<id> for the React dashboard."""
@@ -813,33 +700,6 @@ def _load_portfolio_data() -> dict:
     return {"status": "ok", "portfolio": get_portfolio(text=response.text)}
 
 
-@app.route('/portfolio')
-def portfolio():
-    """Student prtfolio endpoint
-    """
-    try:
-        result = _load_portfolio_data()
-
-        if result["status"] == "redirect":
-            return redirect(url_for("login"))
-        if result["status"] == "error":
-            return render_template("error.html", error=f"response code {result['code']}", traceback="")
-
-        return render_template("portfolio.html", portfolio=result["portfolio"])
-
-    except requests.exceptions.SSLError as e:
-        print(traceback.format_exc())
-        return render_template("error.html", message=f"Zkuste obnovit stránku. Použitý certifikát: {certificate_file}" if True else "Nepodařilo se najít funkční certifikát.")
-
-    except requests.exceptions.ConnectionError as e:
-        print(traceback.format_exc())
-        return render_template("error.html", message="Nelze se připojit k is.psjg.cz. Zkontroluj síťové připojení serveru (firewall, proxy) - viz server log pro detail.")
-
-    except Exception as e:
-        print(traceback.format_exc())
-        return render_template("error.html", message="")
-
-
 @app.route('/api/portfolio')
 def api_portfolio():
     """JSON version of /portfolio for the React dashboard."""
@@ -865,51 +725,46 @@ def api_portfolio():
 
     return jsonify({"ok": True, **result["portfolio"]})
 
-# Zkoušení
-
-
-@app.route('/zkouseni')
-def zkouseni():
-    try:
-        student_id = flask_session_custom.get('studentId')
-
-        # Make sure it exists
-        if not student_id:
-            return redirect(url_for("login"))
-
-    except Exception as e:
-        print(traceback.format_exc())
-        return render_template("error.html", message="")
-
-    # Render the template
-    return render_template("zkouseni.html")
-
-
 @app.route('/api/zkouseni')
 def api_zkouseni():
     """Placeholder JSON endpoint - the zkoušení feature itself is still WIP
-    upstream (see TODO.md), this just mirrors the auth check of /zkouseni.
+    upstream (see TODO.md), this just mirrors the auth check the HTML page had.
     """
     if not flask_session_custom.get('studentId'):
         return jsonify({"ok": False, "error": "not_authenticated"}), 401
     return jsonify({"ok": True, "implemented": False})
 
 
-@app.route("/logout")
-def logout():
-    """Logout. Redirect to login
+# --- React frontend (ispsjginjs), built into FRONTEND_DIST at image build time ---
+
+FRONTEND_DIST = os.environ.get("FRONTEND_DIST") or os.path.join(os.path.dirname(__file__), "frontend_dist")
+
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_frontend(path):
+    """Serves the built React app, falling back to index.html for any path
+    that isn't a real built asset - the client-side router (react-router)
+    then takes over from there. /api/* never reaches this: Flask matches
+    those routes first regardless of definition order.
     """
-    flask_session_custom.clear()
-    return redirect(url_for("login"))
-
-
-@app.context_processor
-def inject_semesters():
-    semesters = flask_session_custom.get("semesters", [])
-    return {
-        "semesters": list(enumerate(semesters)),
-        "selectedSemester": flask_session_custom.get("semester", -1)
-    }
+    if not os.path.isdir(FRONTEND_DIST):
+        # Normal for a plain local checkout: frontend_dist/ only exists inside
+        # the Docker image (built from ispsjginjs at image build time). For
+        # local dev, run the two apps separately instead - `npm run dev` in
+        # ispsjginjs, which proxies /api/* to this Flask server (see its
+        # vite.config.js) - rather than expecting this route to serve the UI.
+        return (
+            "frontend_dist/ not found. This route serves the built React app "
+            "(see the ispsjginjs repo), which only exists inside the Docker "
+            "image. For local development, run `npm run dev` in ispsjginjs "
+            "instead - it proxies /api/* to this server.",
+            200,
+        )
+    target = os.path.join(FRONTEND_DIST, path) if path else None
+    if target and os.path.isfile(target):
+        return send_from_directory(FRONTEND_DIST, path)
+    return send_from_directory(FRONTEND_DIST, "index.html")
 
 
 if __name__ == "__main__":

@@ -10,10 +10,17 @@ def client():
         yield client
 
 
-def test_request_login(client):
+def test_serve_frontend_root(client):
+    # No frontend_dist/ in the test environment (it's only built inside the
+    # Docker image) - the catch-all should still respond 200, not crash.
     response = client.get("/")
     assert response.status_code == 200
-    assert b'<input type="submit" value="P\xc5\x99ihl\xc3\xa1sit se">' in response.data
+
+
+def test_api_session_unauthenticated(client):
+    response = client.get("/api/session")
+    assert response.status_code == 200
+    assert response.get_json() == {"authenticated": False}
 
 def test_grade_calculation():
     assert znamka_from_percentage("100%") == 1

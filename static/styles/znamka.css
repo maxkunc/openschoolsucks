@@ -1,8 +1,0 @@
-.subject-page {
-    max-width: 900px;
-    margin: 0 auto;
-    padding: calc(var(--navbar-height) + 24px) 24px 48px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-}

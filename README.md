@@ -2,38 +2,45 @@
 
 [![Python application](https://github.com/Krupicova12Kase/OpenSchoolSucks/actions/workflows/python-app.yml/badge.svg)](https://github.com/Krupicova12Kase/OpenSchoolSucks/actions/workflows/python-app.yml)
 
+Flask backend for the is.psjg.cz grades dashboard: logs into is.psjg.cz,
+scrapes grades/subjects/portfolio, and exposes them as a small JSON API. The
+UI itself lives in a separate repo, [ispsjginjs](https://github.com/maxkunc/ispsjginjs)
+(React + Tailwind) - this backend's `Dockerfile` builds that repo and serves
+the result itself, so the deployed app is a single service on a single
+origin. There is no separate frontend host, and no `VITE_API_URL` /
+`FRONTEND_ORIGIN` / CORS to configure - `/api/*` calls from the UI are
+same-origin by construction.
+
 ## Deployment
 
-Sessions are stored server-side (`flask_session/` via Flask-Session +
-cachelib), not in the cookie itself, because the real is.psjg.cz login
-cookies are too large to fit in a single signed client-side cookie. That
-means the app needs a host with a persistent/writable filesystem across
-requests - a normal server or container (the included `Dockerfile` targets
-this: e.g. Google Cloud Run, Render, Fly.io, Railway).
-
-**This does not work on stateless serverless platforms like Vercel** as-is:
-each invocation can run in a different, ephemeral instance, so a
-`flask_session/` file written by one request may not be there for the next,
-which breaks login. Making it Vercel-compatible would require swapping the
-session store for an external one shared across invocations (e.g. Redis /
-Vercel KV) instead of the local filesystem - ask if you want that built.
+Sessions are stored server-side (in a tmp dir via Flask-Session + cachelib),
+not in the cookie itself, because the real is.psjg.cz login cookies are too
+large to fit in a single signed client-side cookie. That means the app needs
+a host that runs it as a long-lived container/process (not a *stateless*
+serverless platform like Vercel, where each invocation can land on a
+different ephemeral instance and lose that session data between requests).
 
 ### Deploying to Render
 
 The included `render.yaml` blueprint targets the existing `Dockerfile`
-as-is - Render runs it as one long-lived container (not per-request
-functions), so the local `flask_session/` directory persists across
-requests the way this app needs.
+as-is - Render runs it as one long-lived container, which is what this app
+needs, and the multi-stage `Dockerfile` builds the `ispsjginjs` frontend
+into it during the image build (see `Dockerfile`'s `frontend` stage).
 
 1. On [render.com](https://render.com), **New > Blueprint**, pick this repo/branch. It reads `render.yaml` and creates the service (region `frankfurt`, free plan by default - edit `render.yaml` to change either).
-2. `SECRET_KEY` is generated automatically by the blueprint. Set `FRONTEND_ORIGIN` in the Render dashboard to your deployed frontend's exact origin (e.g. `https://openschool-umber.vercel.app` - no trailing slash, and list multiple as a comma-separated string if you have more than one).
-3. Once deployed, copy the service's `https://<name>.onrender.com` URL and set it as `VITE_API_URL=https://<name>.onrender.com/api` on the frontend (e.g. in Vercel's project env vars), then redeploy the frontend.
-4. Keep this service at a single instance - sessions live on that instance's local disk, so scaling to multiple replicas would (like Vercel) randomly lose sessions between requests, unless the session store is swapped for something shared like Redis.
+2. `SECRET_KEY` is generated automatically by the blueprint. Nothing else is required.
+3. That's it - open the service's `https://<name>.onrender.com` URL and the React UI is served directly from there.
+4. Keep this service at a single instance - sessions live on that instance's local disk, so scaling to multiple replicas would randomly lose sessions between requests, unless the session store is swapped for something shared like Redis.
 5. Render's free plan spins the service down after inactivity; the first request after idle can take ~30-60s to cold-start.
 
 Without the blueprint, the same works as **New > Web Service**, environment
-"Docker" (auto-detected from `Dockerfile`), with the env vars above set by
-hand.
+"Docker" (auto-detected from `Dockerfile`).
+
+Building a different branch/fork of the frontend? The `Dockerfile`'s
+`frontend` stage takes `FRONTEND_REPO` and `FRONTEND_REF` build args
+(defaults: this account's `ispsjginjs`, branch `main`) - pass them via
+`docker build --build-arg ...` if building elsewhere, or your host's
+Docker build-args setting if it has one.
 
 Required environment variables:
 
@@ -41,23 +48,21 @@ Required environment variables:
 - `VERIFY` - optional, defaults to `True`. Set to `False` to skip TLS
   verification against is.psjg.cz (not recommended).
 - `DEBUG` - optional, defaults to `False`. Leave unset/`False` in production.
-- `FRONTEND_ORIGIN` - optional, defaults to `http://localhost:5173,http://127.0.0.1:5173`.
-  Comma-separated list of origins allowed to call the JSON API below with
-  credentials (browsers reject `Access-Control-Allow-Origin: *` together with
-  cookies, so the frontend's real origin(s) must be listed explicitly).
-- `SESSION_COOKIE_SAMESITE` / `SESSION_COOKIE_SECURE` - optional. If the
-  frontend (e.g. the [ispsjginjs](https://github.com/maxkunc/ispsjginjs) React
-  app) is deployed on a *different domain* than this backend, the session
-  cookie needs `SESSION_COOKIE_SAMESITE=None` and `SESSION_COOKIE_SECURE=True`
-  (which requires HTTPS) for the browser to send it back on cross-origin API
-  calls. Same-domain (or same-site, reverse-proxied) deployments can leave
-  both unset.
+- `SESSION_COOKIE_SECURE` - optional, defaults to `False`. Set to `True` in
+  production (anywhere served over HTTPS, which Render is) so the session
+  cookie is never sent over plain HTTP.
+- `SESSION_COOKIE_SAMESITE` - optional, defaults to `Lax`. No reason to
+  change this now that frontend and backend are always same-origin.
+
+### Running the frontend separately instead
+
+The API (see below) is still there if you'd rather deploy `ispsjginjs`
+on its own (e.g. to iterate on the UI without rebuilding this image each
+time) - see its README for `VITE_API_URL` and this backend's now-optional
+`FRONTEND_ORIGIN`-style CORS needs. That path is no longer the recommended
+one, just still supported.
 
 ## JSON API
-
-Alongside the original server-rendered pages, the app exposes a small JSON
-API (same login/scraping logic, same server-side session) for the
-[ispsjginjs](https://github.com/maxkunc/ispsjginjs) React frontend:
 
 - `GET  /api/session` - `{ authenticated }`
 - `POST /api/login` - body `{ username, password }`
@@ -70,10 +75,35 @@ API (same login/scraping logic, same server-side session) for the
 
 All routes other than `/api/login` and `/api/session` return
 `401 {"ok": false, "error": "not_authenticated"}` when there's no valid
-session, mirroring the redirect-to-login behavior of the HTML routes.
+session.
+
+Every other path (`/`, `/login`, `/subject/1`, ...) serves the built React
+app's `index.html`, letting the client-side router handle it - see
+`serve_frontend()` in `app.py`.
+
+## Local development
+
+Run the two apps separately rather than through Docker:
+
+```bash
+pip install -r requirements.txt
+SECRET_KEY=devsecret python app.py       # backend on :5000
+```
+
+```bash
+cd ../ispsjginjs
+npm install
+npm run dev                              # frontend on :5173, proxies /api to :5000
+```
+
+Hitting this Flask server's own `/` directly (without the Vite dev server)
+just returns a short explanatory message, since `frontend_dist/` (the built
+React app) only exists inside the Docker image.
 
 ## Fonts
 
 Numeric LED-style readouts (grade badges, stat numbers, pagination) use
 "LED Counter-7" by Sizenko Alexander / Style-Seven (http://www.styleseven.com/),
-freeware for non-commercial/education use. See `static/fonts/led_counter-7-LICENSE.txt`.
+freeware for non-commercial/education use - see `ispsjginjs`'s
+`public/fonts/led_counter-7-LICENSE.txt` (this repo no longer serves any
+static assets directly).
