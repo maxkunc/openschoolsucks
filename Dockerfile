@@ -56,4 +56,9 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 5000
 
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 app:app
+# --threads capped at 4 (was 8): each concurrent request here can fan out
+# into ~4 upstream calls to is.psjg.cz (session/home/portfolio/exams), so a
+# high thread count turns a burst of students loading the dashboard at once
+# into a much larger burst of simultaneous connections to that small backend
+# than they'd generate browsing the real site by hand.
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 4 --timeout 0 app:app
