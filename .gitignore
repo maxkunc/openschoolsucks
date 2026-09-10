@@ -5,3 +5,9 @@ __pycache__
 .pytest_cache
 local
 frontend_dist
+
+# Claude Code skill tooling (installed via `npx skills add`) - local agent
+# config, not project source; installs land in cwd by default.
+/.agents/
+/.claude/
+/skills-lock.json
