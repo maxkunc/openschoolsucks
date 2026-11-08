@@ -111,6 +111,45 @@ def _resolve_certificate_chain(timeout_seconds: int = 15) -> None:
         pool.submit(certificates).result(timeout=timeout_seconds)
 
 
+def _refresh_certificate() -> bool:
+    """Re-resolve the is.psjg.cz certificate chain and update the
+    module-level `certificate` every outbound request's `session.verify`
+    reads.
+
+    The chain is normally resolved once at process boot and never touched
+    again, which was fine when the host naturally restarted this process
+    every ~15 minutes on its free tier - each restart re-resolved it for
+    free. An external keep-alive pinger now keeps the process running for
+    days, so if is.psjg.cz ever rotates its certificate mid-uptime, the
+    cached chain goes stale with nothing to refresh it. Called from each
+    route's SSLError handler (via _with_cert_retry) to retry once with a
+    freshly resolved chain before giving up.
+    """
+    global certificate
+    if os.environ.get('VERIFY', 'True') != 'True':
+        return False  # verification intentionally disabled, nothing to refresh
+    try:
+        _resolve_certificate_chain()
+        certificate = certificate_chain_path
+        print("Refreshed is.psjg.cz certificate chain after an SSL verification failure")
+        return True
+    except Exception:
+        print(traceback.format_exc())
+        return False
+
+
+def _with_cert_retry(fn):
+    """Call fn(); on an SSL verification failure, refresh the certificate
+    chain once (see _refresh_certificate) and retry fn() before giving up.
+    """
+    try:
+        return fn()
+    except requests.exceptions.SSLError:
+        if not _refresh_certificate():
+            raise
+        return fn()
+
+
 if os.environ.get('VERIFY', 'True') == 'True':
     try:
         _resolve_certificate_chain()
@@ -669,7 +708,7 @@ def api_login():
     if not username or not password:
         return jsonify({"ok": False, "error": "missing_credentials"}), 400
 
-    try:
+    def _attempt_login():
         session = requests.Session()
         session.verify = certificate
         response = session.post("https://is.psjg.cz/sign/in", data={
@@ -677,6 +716,10 @@ def api_login():
             "password": password,
             "signIn": "Přihlásit se",
             "_do": "signInForm-submit"}, headers=headers, timeout=REQUEST_TIMEOUT)
+        return response, session
+
+    try:
+        response, session = _with_cert_retry(_attempt_login)
 
         if response.status_code != 200:
             return jsonify({"ok": False, "error": "upstream_error", "code": response.status_code}), 502
@@ -726,7 +769,7 @@ def api_home():
         return jsonify({"ok": False, "error": "not_authenticated"}), 401
 
     try:
-        result = _load_home_data()
+        result = _with_cert_retry(_load_home_data)
     except requests.exceptions.SSLError:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "ssl_error"}), 502
@@ -815,7 +858,7 @@ def api_subject(subject_id: int):
         return jsonify({"ok": False, "error": "not_authenticated"}), 401
 
     try:
-        result = _load_subject_data(subject_id)
+        result = _with_cert_retry(lambda: _load_subject_data(subject_id))
     except requests.exceptions.SSLError:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "ssl_error"}), 502
@@ -881,7 +924,7 @@ def api_portfolio():
         return jsonify({"ok": False, "error": "not_authenticated"}), 401
 
     try:
-        result = _load_portfolio_data()
+        result = _with_cert_retry(_load_portfolio_data)
     except requests.exceptions.SSLError:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "ssl_error"}), 502
@@ -934,7 +977,7 @@ def api_zkouseni():
         return jsonify({"ok": False, "error": "not_authenticated"}), 401
 
     try:
-        result = _load_zkouseni_data()
+        result = _with_cert_retry(_load_zkouseni_data)
     except requests.exceptions.SSLError:
         print(traceback.format_exc())
         return jsonify({"ok": False, "error": "ssl_error"}), 502
